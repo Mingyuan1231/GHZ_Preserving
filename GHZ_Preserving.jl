@@ -1,9 +1,7 @@
 using QuantumClifford
 using LinearAlgebra
 using Random
-
-# get all two-qubit gates without phases
-twoqubitgates = collect(enumerate_cliffords(2))
+using Distributions
 
 """
 convert bit(phase) to int
@@ -150,13 +148,13 @@ end
 """
 generate permutation tuple for each gate in Pauli group
 This will return a 2D array, each row is the permutation tuple for each gate in Pauli group
-1st idx is from 1 to 4, indicate which gate in Pauli group, in the order of[I,X,Y,Z]
+1st idx is from 1 to 4, indicate which gate in Pauli group, in the order of[X,Y,Z,I]
 2nd idx is from 1 to 2^n, indicate the input state
 the element in these two idx is the output state.
 """
-function generate_Pauli_perm(n,states)
+function generate_Pperm(n,states)
     total_state=2^n
-    pauligate=[P"I",P"X",P"Y",P"Z"]
+    pauligate=[P"X",P"Y",P"Z",P"I"]
     idx_pauli_gate = [[[] for _ in 1:total_state] for _ in 1:4]
     for k in 1:4
         for i in 1:total_state
@@ -180,109 +178,24 @@ end
 #######################
 #Initialization
 #######################
+"""
+Initialization
+"""
+# get all two-qubit gates without phases
+const twoqubitgates = collect(enumerate_cliffords(2))
+# 6 gate in H group
+const hgroup_gate = generate_Hgroup()
+# 8 gate in F group
+const fgroup_gate = generate_Fgroup()
+#Dict for state cache
+const State_Cache = Dict{Int, Vector}()
+#Dict for H group permutation cache
+const HPerm_Cache = Dict{Int, Vector}()
+#Dict for F group permutation cache
+const FPerm_Cache = Dict{Int, Vector}()
+#Dict for Pauli group permutation cache
+const PPerm_Cache = Dict{Int, Vector}()
 
-struct Perm{N}
-    n::Int
-    h::Any
-    f::Any
-    p::Any
-
-    function Perm{N}() where N
-        states = generate_state(N)
-        h_group = generate_Hgroup()
-        f_group = generate_Fgroup()
-        h_perm = generate_Hperm(N, h_group, states)
-        f_perm = generate_Fperm(N, f_group, states)
-        p_perm = generate_Pauli_perm(N, states)
-        new(N, h_perm, f_perm, p_perm)
-    end
-end
-
-
-
-###################
-#test
-###################
-
-n=3
-perm=Perm{n}()
-state=generate_state(n)
-hgroup=generate_Hgroup()
-fgroup=generate_Fgroup()
-hperm=generate_Hperm(n,hgroup,state)
-fperm=generate_Fperm(n,fgroup,state)
-pperm=generate_Pauli_perm(n,state)
-
-
-check=state[3] ⊗ state[4]
-check.tab.phases
-adjust_order(check.tab.phases,n)
-
-for i in 1:8
-    temp=state[i] ⊗ state[i]
-    println(temp.tab.phases)
-    println((bit_to_int(temp.tab.phases)+1)÷2)
-end
-
-GHZState(b::BitVector)=GHZState(3,2,b)
-
-s=GHZState((0,1,0,1,0,0))
-
-#checking H group
-swap=Hgroup(1,1,2)
-apply!(s,swap)
-
-
-cnot12=Hgroup(2,1,2)
-apply!(s,cnot12)
-
-inv_cnot21=Hgroup(3,1,2)
-int_cnt12=Hgroup(4,1,2)
-identity=Hgroup(5,1,2)
-cnot21=Hgroup(6,2,1)
-
-
-n=s.qubit_num
-op=identity
-#concatenate the bit arrays from ghz_idx1 and ghz_idx2
-start_idx1=(op.ghz_idx1-1)*n+1
-end_idx1=op.ghz_idx1*n
-start_idx2=(op.ghz_idx2-1)*n+1
-end_idx2=op.ghz_idx2*n
-combined_bits=vcat(s.phases[start_idx1:end_idx1],s.phases[start_idx2:end_idx2])
-phase_idx=bit_to_int(combined_bits)
-
-#permutation
-new_state_idx=perm.h[op.gate_idx][phase_idx]
-new_phase = int_to_bit(new_state_idx,2n)
-
-#assign new phase to the state
-s.phases[start_idx1:end_idx1] .= new_phase[1:n]
-s.phases[start_idx2:end_idx2] .= new_phase[(n+1):end]
-
-total_state=8
-states=generate_state(3)
-idx_homo_gate=[]
-for i in 1:total_state
-    for j in 1:total_state
-        temp_state=states[i] ⊗ states[j]
-        for t in 1:n
-            apply!(temp_state, twoqubitgates[121], [t,t+n])
-        end
-        canonicalize!(temp_state)
-        #find the matching index in phase_perm
-        idx=(bit_to_int(temp_state.tab.phases)+1)÷2 #convention check
-        push!(idx_homo_gate,idx)
-    end
-end
-
-st=state[1] ⊗ states[5]
-
-apply!(st,twoqubitgates[121],[1,4])
-apply!(st,twoqubitgates[121],[2,5])
-apply!(st,twoqubitgates[121],[3,6])
-canonicalize!(st)
-idx=(bit_to_int(st.tab.phases)+1)÷2
 
 #########################
 #Main Struct
@@ -302,60 +215,102 @@ end
 GHZState(n::Integer, m::Integer)=GHZState(n,m,BitVector(falses(n*m)))
 GHZState(t::Tuple)=GHZState(BitVector(t))
 
+Base.copy(state::GHZState) = GHZState(state.qubit_num, state.ghz_num, copy(state.phases))
+Base.:(==)(l::GHZState, r::GHZState) = l.phases == r.phases
+
 """
 H group
-1st argument, gate index: 1-6 in the order of [SWAP,CNOT12,INV_CNOT21,INV_CNOT12,IDENTITY,CNOT21]
+GHZ preserving gate contain 6 gates which can apply homogeneously to all qubits
+1st argument, gate index: 1-6 in the order of [Swap,Cnot12,Inv_Cnot21,Inv_Cnot12,Identity,Cnot21]
 2nd argument, ghz index: 1-n
 3rd argument, ghz index: 1-n
 """
-struct Hgroup <: GHZOp
+struct Hgroup{N} <: GHZOp
     gate_idx::Int
     ghz_idx1::Int
     ghz_idx2::Int
-    function Hgroup(g,q1,q2)
-        1 <= g <= 6 || throw(ArgumentError("Invalid gate index"))
-        1 <= q1 <= perm.n || throw(ArgumentError("Invalid qubit index"))
-        1 <= q2 <= perm.n || throw(ArgumentError("Invalid qubit index"))
-        new(g,q1,q2)
+    perm::Any
+end
+
+function Hgroup{N}(g,q1,q2) where N
+    if !haskey(State_Cache, N)
+        State_Cache[N] = generate_state(N)
     end
+    state = State_Cache[N]
+
+    if !haskey(HPerm_Cache, N)
+        HPerm_Cache[N]=generate_Hperm(N,hgroup_gate,state)
+    end
+    perm = HPerm_Cache[N]
+
+    1 <= g <= 6 || throw(ArgumentError("Invalid gate index"))
+    1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
+    1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
+    return Hgroup{N}(g,q1,q2,perm)
 end
 
 """
 F group
+GHZ preserving gate contain 8 gates which can apply bi-locally to all qubits
 1st argument, gate index: 1-8 in the order of [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
 2nd argument, ghz index: 1 - n
 3rd argument, ghz index: 1 - n
 4th argument, node index:1 - (n-1)
 """
-struct Fgroup <: GHZOp
+struct Fgroup{N} <: GHZOp
     gate_idx::Int
     ghz_idx1::Int
     ghz_idx2::Int
     node_idx::Int
-    function Fgroup(g,q1,q2,node)
-        1 <= g <= 8 || throw(ArgumentError("Invalid gate index"))
-        1 <= q1 <= perm.n || throw(ArgumentError("Invalid qubit index"))
-        1 <= q2 <= perm.n || throw(ArgumentError("Invalid qubit index"))
-        1 <= node <= (n-1) || throw(ArgumentError("Invalid node index"))
-        new(g,q1,q2,node)
+    perm::Any
+end
+
+function Fgroup{N}(g,q1,q2,node) where N
+    if !haskey(State_Cache, N)
+        State_Cache[N] = generate_state(N)
     end
+    state = State_Cache[N]
+
+    if !haskey(FPerm_Cache, N)
+        FPerm_Cache[N]=generate_Fperm(N,fgroup_gate,state)
+    end
+    perm = FPerm_Cache[N]
+
+    1 <= g <= 8 || throw(ArgumentError("Invalid gate index"))
+    1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
+    1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
+    1 <= node <= (N-1) || throw(ArgumentError("Invalid node index"))
+    return Fgroup{N}(g,q1,q2,node,perm)
 end
 
 """
 Pauli group
+all 4 Pauli gates can apply as they only change the phases.
 1st argument, gate_idx: 1 for X, 2 for Y, 3 for Z, 4 for I
 2nd argument, ghz_idx: the state idx acting on
 3nd argument, qubit_idx: qubit acting on 1-n
 """
-struct PauliGroup <: GHZOp
+struct PauliGroup{N} <: GHZOp
     gate_idx::Int
     ghz_idx::Int
     qubit_idx::Int
-    function PauliPermutation(p,s)
-        1 <= p <= 4 || throw(ArgumentError("The permutation index needs to be between 1 and 4"))
-        s>0 || throw(ArgumentError("The Bell pair indices have to be positive integers."))
-        new(p,s)
+    perm::Any
+end
+
+function PauliGroup{N}(p,s,q) where N
+    if !haskey(State_Cache, N)
+        State_Cache[N] = generate_state(N)
     end
+    state = State_Cache[N]
+
+    if !haskey(PPerm_Cache, N)
+        PPerm_Cache[N]=generate_Pperm(N,state)
+    end
+    perm = PPerm_Cache[N]
+
+    1 <= p <= 4 || throw(ArgumentError("The permutation index needs to be between 1 and 4"))
+    s>0 || throw(ArgumentError("The Bell pair indices have to be positive integers."))
+    return PauliGroup{N}(p,s,q,perm)
 end
 
 """
@@ -372,7 +327,7 @@ function QuantumClifford.apply!(s::GHZState, op::Hgroup)
     phase_idx=bit_to_int(combined_bits)
 
     #permutation
-    new_state_idx=perm.h[op.gate_idx][phase_idx]
+    new_state_idx=op.perm[op.gate_idx][phase_idx]
     new_phase = int_to_bit(new_state_idx,2n)
 
     #assign new phase to the state
@@ -395,7 +350,7 @@ function QuantumClifford.apply!(s::GHZState, op::Fgroup)
     phase_idx=bit_to_int(combined_bits)
 
     #permutation
-    new_state_idx=perm.f[op.node_idx][op.gate_idx][phase_idx]
+    new_state_idx=op.perm[op.node_idx][op.gate_idx][phase_idx]
     new_phase = int_to_bit(new_state_idx,2n)
 
     #assign new phases to the state
@@ -414,12 +369,12 @@ function QuantumClifford.apply!(s::GHZState, op::PauliGroup)
     phase_idx=bit_to_int(s.phases[start_idx:end_idx])
 
     #permutation
-    new_state_idx=perm.p[op.gate_idx][phase_idx]
-    new_phase = int_to_bit(new_state_idx,2n)
+    new_state_idx=op.perm[op.gate_idx][phase_idx][op.qubit_idx]
+    new_phase = int_to_bit(new_state_idx,n)
 
     #assign new phases to the state
     s.phases[start_idx:end_idx] .= new_phase
-    return state
+    return s
 end
 
 """
@@ -436,17 +391,20 @@ end
 
 """
 Measurement on the GHZ state
-1st argument, basis_idx: 1 for X, 2 for Y, 3 for Z
+1st argument, basis_idx: 1 for X, 2 for Y, 3 for Z, Y is not useful as there is no simple Y measurement in GHZ state
 2nd argument, ghz_idx: the index of ghz state to be measured
 """
 struct GHZMeasure <: QuantumClifford.AbstractMeasurement
+    n::Int
     basis_idx::Int
     ghz_idx::Int
-    function GHZMeasure(b,si)  #b as basis index, si as state index, n as number of qubits
-        1 <= b <= 3 || throw(ArgumentError("Invalid basis index"))
-        1 <= si <= perm.n || throw(ArgumentError("Invalid state index"))
-        new(b,si)
-    end
+end
+
+function GHZMeasure(n,b,si)
+    #b as basis index, si as state index, n as number of qubits
+    1 <= b <= 3 || throw(ArgumentError("Invalid basis index"))
+    1 <= si <= n || throw(ArgumentError("Invalid state index"))
+    return GHZMeasure(n,b,si)
 end
 
 """
@@ -465,7 +423,7 @@ function Measure!(s::GHZState, op::GHZMeasure)
         #the result of X basis should be the same as Z basis except +,- instead of 0,1
         measure_result=[s.phases[start_idx]] #X basis measurement result should be the phase of 1st stabilizer
         s.phases[start_idx] .= 0 #reset the state to 0
-    #TODO Y measurement
+    #there is no simple Y measurement in GHZ state.
     end
     return s, measure_result
 end
@@ -518,31 +476,150 @@ function QuantumClifford.apply!(s::GHZState, g::GHZGate)
     return s
 end
 
+#region good operations
+
+#########################
+#Typically good operations
+#########################
+
+"""
+CNOT as a good operation
+"""
+struct CNOT <: GHZOp
+    n::Int
+    ghz_idx1::Int
+    ghz_idx2::Int
+    function CNOT12(n,i1,i2)
+        (i1 > 0 && i2 > 0) || throw(ArgumentError("GHZ state index should be positive integers"))
+        (1<=i1<=n && 1<=i2<=n) || throw(ArgumentError("Invalid GHZ state index"))
+        new(n,i1,i2)
+    end
+end
+
+function QuantumClifford.apply!(s::GHZState, op::CNOT)
+    n=s.qubit_num
+    m=s.ghz_num
+    #apply H group
+    apply!(s,Hgroup(2,op.ghz_idx1,op.ghz_idx2))
+    return s
+end
+
+"""
+CZ as a good operation
+"""
+struct CZ <: GHZOp
+    n::Int
+    ghz_idx1::Int
+    ghz_idx2::Int
+    node::Int
+    function CZ12(n,i1,i2,node)
+        (i1 > 0 && i2 > 0) || throw(ArgumentError("GHZ state index should be positive integers"))
+        (1<=i1<=n && 1<=i2<=n) || throw(ArgumentError("Invalid GHZ state index"))
+        (1<=node<=n-1) || throw(ArgumentError("Invalid node index"))
+        new(n,i1,i2,node)
+    end
+end
+
+function QuantumClifford.apply!(s::GHZState, op::CZ)
+    n=s.qubit_num
+    m=s.ghz_num
+    #apply H group
+    apply!(s,Fgroup(4,op.ghz_idx1,op.ghz_idx2,op.node))
+    return s
+end
+
+"""
+Phase gate as a good operation
+"""
+struct F1 <: GHZOp
+    n::Int
+    ghz_idx1::Int
+    ghz_idx2::Int
+    node::Int
+    function F1(n,i1,i2,node)
+        (i1 > 0 && i2 > 0) || throw(ArgumentError("GHZ state index should be positive integers"))
+        (1<=i1<=n && 1<=i2<=n) || throw(ArgumentError("Invalid GHZ state index"))
+        (1<=node<=n-1) || throw(ArgumentError("Invalid node index"))
+        new(n,i1,i2,node)
+    end
+end
+
+function QuantumClifford.apply!(s::GHZState, op::F1)
+    n=s.qubit_num
+    m=s.ghz_num
+    #apply H group
+    apply!(s,Fgroup(1,op.ghz_idx1,op.ghz_idx2,op.node))
+    return s
+end
+
+#endregion
+
+#region Noisy
 
 ############
 #Noisy
 ############
 
+"""
+Pauli noise with probability px, py, pz
+"""
 struct PauliNoiseOp <: GHZOp
+    qubit_num::Int
     ghz_idx::Int
-    qubit_idx::Int
     px::Float64
     py::Float64
     pz::Float64
 end
 
 function QuantumClifford.apply!(s::GHZState, op::PauliNoiseOp)
+    n=op.qubit_num
     i=op.ghz_idx
-    q=op.qubit_idx
-    r=rand()
-    if r<g.px
-        apply!(s,PauliGroup(1,i,q))
-    elseif r<g.px+g.py
-        apply!(s,PauliGroup(2,i,q))
-    elseif r<g.px+g.py+g.pz
-        apply!(s,PauliGroup(3,i,q))
+
+    for q in 1:n
+        r=rand()
+        if r<op.px
+            apply!(s,PauliGroup{n}(1,i,q))
+        elseif r<op.px+op.py
+            apply!(s,PauliGroup{n}(2,i,q))
+        elseif r<op.px+op.py+op.pz
+            apply!(s,PauliGroup{n}(3,i,q))
+        end
     end
-    return state
+    return s
+end
+
+"""
+Depolarize error
+"""
+function depolarize!(s::GHZState, op::Hgroup, p::Float64,)
+    n=s.qubit_num
+    i1=op.ghz_idx1
+    i2=op.ghz_idx2
+    
+    for q in 1:n
+        if rand()>p
+            case1 = rand(1:4)
+            apply!(s,PauliGroup{n}(case1,i1,q))
+            case2 = rand(1:4)
+            apply!(s,PauliGroup{n}(case2,i2,q))
+        end
+    end
+   
+end
+
+function depolarize!(s::GHZState, op::Fgroup, p::Float64)
+    n=s.qubit_num
+    i1=op.ghz_idx1
+    i2=op.ghz_idx2
+    node=op.node
+
+    if rand()>p
+        case1 = rand(1:4)
+        apply!(s,PauliGroup{n}(case1,i1,node))
+        case2 = rand(1:4)
+        apply!(s,PauliGroup{n}(case2,i2,node+1))
+    end
+
 end
 
 """
@@ -552,6 +629,24 @@ struct NoisyMeasure <: GHZOp
     m::GHZMeasure
     p::Float64
 end
+
+"""
+Common noisy measurement with probability p giving wrong result
+"""
+function QuantumClifford.apply!(s::GHZState, op::NoisyMeasure)
+    state, result=Measure!(s, op.m)
+    n=s.qubit_num
+
+    #error in coincidence measurement.
+    r=Bernoulli(op.p)
+    measurement_errors = [rand(r) for _ in 1:n]
+    error_phase = [i ⊻ j for (i, j) in zip(
+        measurement_errors[begin:end-1], measurement_errors[2:end])]
+
+    result .= result .⊻ error_phase
+    return state, result
+end
+
 
 """
 Noisy measurement and Pauli noise after the reset
@@ -564,52 +659,38 @@ struct NoisyMeasureNoisyReset
     pz::Float64
 end
 
-#=
-function QuantumClifford.apply!(s::GHZState, op::NoisyMeasure)
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure)
     state, result=Measure!(s, op.m)
-    state, result⊻(rand()<op.p) ? continue_stat : failure_stat
-end
-=#
+    original_result = copy(result)
 
-function QuantumClifford.apply!(s::GHZState, op::NoisyMeasure)
-    state, result=Measure!(s, op.m)
-    if rand()<op.p
-        result .= result .⊻ true        #flip the result
-    end
-    return state, result
-end
-
-#=
-function QuantumClifford.apply!(s::GHZState, op::NoisyMeasureNoisyReset)
-    state, result = Measure!(s, op.m)
-    cont = result⊻(rand()<op.p)
-    cont && apply!(state, PauliNoiseOp(op.m.ghz_idx,op.px,op.py,op.pz))
-    state, cont ? continue_stat : failure_stat
-end
-=#
-
-#not sure here is necessary
-#in the BP case, `PauliNoiseOp(idx,px,py,pz)` causes qubit-pair `idx` to flip to one of the other 3 Bell states with probabilities `px`, `py`, `pz` respectively.
-#but here we will have 2^n-1 states which it can be filpped into, it is not very smart to assign the probability to each state.
-#also, the probabilities of each state is different as some state is more likely to be flipped than others. 1 qubit error is more likely than 2 qubit error and so on.
-
-function QuantumClifford.apply!(s::GHZState, op::NoisyMeasureNoisyReset)
-    state, result = Measure!(s, op.m)
-    if rand()<op.p
-        result .= result .⊻ true        #flip the result
-    end
+    #each qubit have independent filp error with probability p
+    result .= result .⊻ (rand(length(result)) .< op.p)
     
-    #apply Pauli noise
-    if any(result)
-        apply!(state, PauliNoiseOp(op.m.ghz_idx, op.px, op.py, op.pz))
+    if any(original_result .!= result)
+        return state, failure_stat
+    else
+        return state, continue_stat
+    end
+end
+
+
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasureNoisyReset)
+    state, result = Measure!(s, op.m)
+    
+    #flip error
+    flipped =  result .⊻ (rand(length(result)) .< op.p)
+
+    #if flipped apply Pauli noise
+    if any(flipped)
+        apply!(state, PauliNoiseOp(s.qubit_num,op.m.ghz_idx,op.px,op.py,op.pz))
     end
 
-    #choose the next state
-    continue_stat = result
-    failure_stat = !result
-
-    return state, any(result) ? continue_stat : failure_stat
+    state, any(flipped) ? failure_stat : continue_stat 
 end
+
+#endregion
+
+#region Random
 
 ############
 #Random
@@ -623,7 +704,7 @@ function Random.rand(::Type{GHZState}, n::Int, m::Int)
 end
 
 """
-Generate random GHZ state with n qubits and m states, with fidelity p, rho=p|0⟩⟨0|+(1-p)I/2^n, |0⟩⟨0| stands for all 0 state
+Generate random GHZ state with n qubits and m states, with fidelity p
 """
 function Random.rand(::Type{GHZState}, n::Int, m::Int, p::Float64)
     phases=BitVector()
@@ -632,134 +713,136 @@ function Random.rand(::Type{GHZState}, n::Int, m::Int, p::Float64)
             #generate target state, all 0
             append!(phases, BitVector(falses(n)))
         else
-            #generate random state
-            append!(phases, BitVector(rand(Bool,n)))
+            #generate random state except all 0
+            random_bits = BitVector(rand(Bool,n))
+            while all(!x for x in random_bits)  #avoid all 0 state
+                random_bits = BitVector(rand(Bool,n))
+            end
+            append!(phases, random_bits)
         end
     end
     return GHZState(n,m,phases)
 end
 
-############
-#test
-############
-
-NM=NoisyMeasure(GHZMeasure(3,2),0.5)
-apply!(teststate,NM)
-teststate
-NM.m
-state=Measure!(teststate,NM.m)
-state,result=apply!(teststate,NM)
-state
-result
-
-teststate=GHZState(3,2)
-testrandstate=rand(GHZState,3,2)
-
-check=GHZState((0,0,0,1,1,0))
-check.phases
-
-Measure!(check,GHZMeasure(3,2))
-Measure!(testrandstate,Z_measure)
-
-
-for i in 1:100
-    testrandstate=rand(GHZState,3,2,0.25)
-    be=copy(testrandstate.phases)
-    apply!(testrandstate,cnot12)
-    println(be,testrandstate.phases)
-end
-
-teststate=generate_state(3)
-for i in 1:8
-    println(teststate[i].tab.phases)
-    println(bit_to_int(teststate[i].tab.phases))
-end
-
-bit_to_int([0,0,0,0,0,0,0])
-rand(GHZState,3,2,0.5)
-Z_measure=GHZMeasure(3,2)
-
-succ_dict=Dict{Tuple{Float64,Float64},Float64}()
-fide_dict=Dict{Tuple{Float64,Float64},Float64}()
-statecheck=[]
-t=10000
-
-for p2 in [0.9,0.95,0.99]
-    NM=NoisyMeasure(Z_measure,1-p2)
-    for fin in 0:0.05:1
-        count=0
-        fout=0
-        for i in 1:t
-            testrandstate=rand(GHZState,3,2,fin)
-            apply!(testrandstate,cnot12)
-            s,result=apply!(testrandstate,NM)
-            if result ==[0,0]
-                count+=1
-                push!(statecheck,s)
-                #count fidelity
-                fout+=Int(s.phases[1:3] == [0,0,0])
-            end
-        end
-        succ_dict[(p2,fin)]=count/t
-        fide_dict[(p2,fin)]=fout/count
+"""
+Random GHZGate
+"""
+function Random.rand(::Type{GHZGate}, n::Int)
+    h=rand(1:6)
+    f=rand(1:8,n-1)
+    p=rand(1:4,n)
+    ghz1=rand(1:n)
+    ghz2=rand(1:n)
+    while ghz1==ghz2
+        ghz2=rand(1:n)
     end
+    return GHZGate(n,h,f,p,ghz1,ghz2)
 end
 
-using Plots
-
-p2_values = unique([key[1] for key in keys(succ_dict)])
-
-# Initialize the plots
-p_success = plot(title="Success Rate vs. fin", xlabel="fin", ylabel="Success Rate", legend=:topleft,xlims=(0,1),ylims=(0,1),aspect_ratio=:equal)
-p_fidelity = plot(title="Fidelity vs. fin", xlabel="fin", ylabel="Fidelity", legend=:topleft,xlims=(0,1),ylims=(0,1),aspect_ratio=:equal)
-
-# Plotting for success_rate_dict
-for p2 in p2_values
-    fin_values = [key[2] for key in keys(succ_dict) if key[1] == p2]
-    success_rates = [succ_dict[(p2, fin)] for fin in fin_values]
-    
-    sorted_indices = sortperm(fin_values)
-    plot!(p_success, fin_values[sorted_indices], success_rates[sorted_indices], fillalpha=0.3, label="p2 = $p2")
+"""
+Random CNOT on ghz state i and j
+"""
+function Random.rand(::Type{CNOT}, n::Int)
+    i=rand(1:n)
+    j=rand(1:n)
+    while i==j
+        j=rand(1:n)
+    end
+    return CNOT(n,i,j)
 end
 
-# Plotting for fidelity_dict
-for p2 in p2_values
-    fin_values = [key[2] for key in keys(fide_dict) if key[1] == p2]
-    fidelities = [fide_dict[(p2, fin)] for fin in fin_values]
-    
-    sorted_indices = sortperm(fin_values)
-    plot!(p_fidelity, fin_values[sorted_indices], fidelities[sorted_indices], fillalpha=0.3, label="p2 = $p2")
+"""
+Random CZ on ghz state i and j
+"""
+function Random.rand(::Type{CZ}, n::Int)
+    i=rand(1:n)
+    j=rand(1:n)
+    while i==j
+        j=rand(1:n)
+    end
+    node=rand(1:n-1)
+    return CZ(n,i,j,node)
 end
 
-p=plot(p_fidelity, p_success, layout=(1,2))
-display(p)
-
-
-using Makie
-using CairoMakie
-
-function makefig_succ()
-    f_in=0:0.05:1
-    fig=Figure()
-    ax=Axis(fig[1,1],aspect=AxisAspect(1),xlabel="F_in",ylabel="succ rate")
-    limits!(ax,0,1,0,1)
-    ax.xticks=0:0.1:1
-    ax.yticks=0:0.1:1
-    lines!(ax,f_in,succ_out)
-    return fig
+"""
+Random F1 on ghz state i and j
+"""
+function Random.rand(::Type{F1}, n::Int)
+    i=rand(1:n)
+    j=rand(1:n)
+    while i==j
+        j=rand(1:n)
+    end
+    node=rand(1:n-1)
+    return F1(n,i,j,node)
 end
 
-function makefig_fide()
-    f_in=0:0.05:1
-    fig=Figure()
-    ax=Axis(fig[1,1],aspect=AxisAspect(1),xlabel="F_in",ylabel="succ rate")
-    limits!(ax,0,1,0,1)
-    ax.xticks=0:0.1:1
-    ax.yticks=0:0.1:1
-    lines!(ax,f_in,fide_out)
-    return fig
+"""
+Random measurement on ghz state i
+"""
+function Random.rand(::Type{GHZMeasure}, n::Int)
+    b=rand([1,3])   #no 2 as no Y for now.
+    i=rand(1:n)
+    return GHZMeasure(b,i)
 end
 
-makefig_succ()
-makefig_fide()
+#endregion
+
+#region to QC
+
+#################################
+#Convension from ghz preserving to QC
+#################################
+
+"""
+Convert GHZ preserving gate to QC gate
+"""
+function toQCcircuit end
+
+function toQCcircuit(g::Hgroup)
+    return hgroup_gate[g.gate_idx]
+end
+
+function toQCcircuit(g::Fgroup)
+    return fgroup_gate[g.gate_idx]
+
+end
+
+const pg_qc = (sId1,sX,sZ,sY)
+
+function toQCcircuit(g::PauliGroup)
+    return pg_qc[g.gate_idx]
+end
+
+function toQCcircuit(g::GHZMeasure)
+    m=(sMX, sMY, sMZ)[g.basis_idx]
+end
+
+function QuantumClifford.Stabilizer(s::GHZState)
+    # make sure the state is in the cache
+    if !haskey(State_Cache, s.qubit_num)
+        State_Cache[s.qubit_num] = generate_state(s.qubit_num)
+    end
+
+    states=State_Cache[s.qubit_num]
+
+    result_states = []
+    for i in 1:s.ghz_num
+        start_idx=(i-1)*s.qubit_num+1
+        end_idx=i*s.qubit_num
+        push!(result_states, states[bit_to_int(s.phases[start_idx:end_idx])])
+    end
+
+    combined_state=copy(result_states[1])
+    for i in 2:length(result_states)
+        combined_state=combined_state ⊗ result_states[i]
+    end
+
+    return combined_state
+end
+
+function QuantumClifford.MixedDestabilizer(s::GHZState)
+    MixedDestabilizer(Stabilizer(s))
+end
+#endregion
 
