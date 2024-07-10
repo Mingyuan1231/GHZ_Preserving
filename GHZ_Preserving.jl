@@ -1,7 +1,14 @@
+module GHZPreserving
+
 using QuantumClifford
 using LinearAlgebra
 using Random
 using Distributions
+
+export GHZState, GHZMeasure, GHZGate, Measure!,
+    Hgroup, Fgroup, PauliGroup,
+    CNOT, CZ, F1, depolarize!, 
+    PauliNoiseOp, NoisyMeasure, NoisyMeasureNoisyReset
 
 """
 convert bit(phase) to int
@@ -846,3 +853,4 @@ function QuantumClifford.MixedDestabilizer(s::GHZState)
 end
 #endregion
 
+end 
