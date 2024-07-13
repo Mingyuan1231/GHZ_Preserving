@@ -5,7 +5,7 @@ using LinearAlgebra
 using Random
 using Distributions
 
-export GHZState, GHZMeasure, GHZGate, Measure!,
+export GHZState, GHZMeasure, GHZGate, Measure!, rand,
     Hgroup, Fgroup, PauliGroup,
     CNOT, CZ, F1, depolarize!, 
     PauliNoiseOp, NoisyMeasure, NoisyMeasureNoisyReset

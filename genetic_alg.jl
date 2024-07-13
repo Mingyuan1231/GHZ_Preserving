@@ -1,108 +1,18 @@
-using GHZPreserving
+using .GHZPreserving
 using QuantumClifford
 using QuantumClifford.Experimental.NoisyCircuits
 using Random
-#using PyPlot
 using Statistics
 
-struct Performance
-    error_probabilities::Vector{Float64}
-    success_probability::Float64
-end
-#=
-mutable struct Individual
-    history::String
-    k::Int
-    r::Int
-    f_in::Float64
-    cost_function # function that takes in Performance type and returns a number
-    ops::Vector{Union{PauliNoiseBellGate{CNOTPerm},NoisyBellMeasureNoisyReset}}
-    performance::Performance
-    fitness::Float64
-end 
-=#
 mutable struct Individual
     history::String
     qubit_num::Int
     ghz_num::Int
     f_in::Float64
-    cost_function # function that takes in Performance type and returns a number
     ops::Vector{Union{Hgroup,Fgroup}} #modify?
-    performance::Performance
-    fitness::Float64
+    success::Float64
+    f_out::Float64
 end 
-
-#=
-p_zero(p::Performance)=p.error_probabilities[1]
-p_one_zero(p::Performance)=sum(p.error_probabilities[1:2])
-p_two_one_zero(p::Performance)=sum(p.error_probabilities[1:3])
-=#  
-
-function calculate_performance_new!(indiv::Individual, num_simulations=10) 
-    K = indiv.k
-    R = indiv.r
-    state = BellState(R)
-    count_success = 0
-    counts_marginals = zeros(Int,K) # an array to find F₁, F₂, …, Fₖ
-    counts_nb_errors = zeros(Int,K+1) # an array to find P₀, P₁, …, Pₖ -- Careful with indexing it!
-
-
-    px0 = py0 = pz0 = (1-indiv.f_in)/3
-    initial_noise_circuit = [PauliNoiseOp(i, px0, py0, pz0) for i in 1:indiv.r]
-
-    for _ in 1:num_simulations
-        res_state, res = mctrajectory!(copy(state), initial_noise_circuit)
-        res_state, res = mctrajectory!(res_state,indiv.ops)
-        if res == continue_stat
-            count_success += 1
-            err_count = 0
-            for i in 1:K
-                if res_state.phases[2i-1] || res_state.phases[2i] # TODO write a better interface to get this data
-                    err_count += 1
-                else
-                    counts_marginals[i] += 1
-                end
-            end
-            counts_nb_errors[err_count+1] += 1
-        end
-    end
-
-    p_success = count_success / num_simulations
-    marginals = counts_marginals / count_success # it could have NaNs if count_success == 0
-    err_probs = counts_nb_errors / count_success # it could have NaNs if count_success == 0
-    indiv.performance = Performance(err_probs, p_success)
-    indiv.fitness = count_success > 30 ? indiv.cost_function(indiv.performance) : 0.0
-    indiv.performance
-end
-
-
-function calculate_performance!(indiv::Individual, num_simulations=10) 
-    all_resulting_pairs = Vector{BellState}() # Todo - create in advance and assign to individual
-    all_successes = Vector{Bool}()
-    state = BellState(indiv.r)
-    px0 = py0 = pz0 = (1-indiv.f_in)/3
-    initial_noise_circuit = [PauliNoiseOp(i, px0, py0, pz0) for i in 1:indiv.r]
-    for i=1:num_simulations
-        new_state = copy(state)
-        mctrajectory!(new_state, initial_noise_circuit)
-        resulting_pairs, success = mctrajectory!(new_state, indiv.ops)
-        push!(all_resulting_pairs, resulting_pairs)
-        push!(all_successes, success==QuantumClifford.Experimental.NoisyCircuits.CircuitStatus(0))
-    end
-
-    successful_runs = (all_successes .== 1)
-    successes = sum(successful_runs)
-    if successes < 30
-        indiv.performance = Performance(zeros(Float64, indiv.k), 0.0)
-        return indiv.fitness = 0.0
-    end
-    success_probability = successes/num_simulations
-    errors = [sum(all_resulting_pairs[i].phases[1:2:2*indiv.k] .| all_resulting_pairs[i].phases[2:2:2*indiv.k]) for i=1:num_simulations if successful_runs[i]]
-    error_probabilities = [sum(errors .== i)/successes for i=0:indiv.k]
-    indiv.performance = Performance(error_probabilities, success_probability)
-    indiv.fitness = indiv.cost_function(indiv.performance)
-    indiv.performance
-end
 
 function drop_op(indiv::Individual) 
     new_indiv = deepcopy(indiv)
@@ -111,17 +21,31 @@ function drop_op(indiv::Individual)
     return new_indiv
 end
 
-function gain_op(indiv::Individual, p2::Float64, η::Float64)
+#TODO adding noise
+function gain_op(indiv::Individual)
     new_indiv = deepcopy(indiv)
-    px = py = pz = (1 - p2)/4
-    px0 = py0 = pz0 = (1-indiv.f_in)/3
-    rand_op = rand() < 0.7 ? PauliNoiseBellGate(rand(CNOTPerm, randperm(indiv.r)[1:2]...), px, py, pz) : NoisyBellMeasureNoisyReset(rand(BellMeasure, rand(1:indiv.r)), 1-η, px0, py0, pz0)
-    if length(new_indiv.ops) == 0
-        push!(new_indiv.ops, rand_op)
+    n=indiv.qubit_num
+    idx=indiv.ghz_num
+    if rand() < 0.0 #no measurement adding for now
+        #chance to measure
+        #rand[1,3] as X or Z measure, no Y for now, measure random ghz state
+        measure=GHZMeasure(n,3,rand(1:idx))  #3 tobe edit later as measure basis, Z for now
+        gate=NoisyMeasre(measure,1)    #1 tobe edit later as noise level, no noise for now
+    elseif rand() < 0.5
+        #chance to add H gate to two random ghz state
+        perm=randperm(idx)[1:2]
+        gate = Hgroup{n}(rand(1:6),perm[1],perm[2])
     else
-        insert!(new_indiv.ops, rand(1:length(new_indiv.ops)), rand_op)
+        #chance to add F gate to two random ghz state at random node.
+        perm=randperm(idx)[1:2]
+        gate = Fgroup{n}(rand(1:8),perm[1],perm[2],rand(1:idx-1))
     end
 
+    if length(new_indiv.ops) == 0
+        push!(new_indiv.ops, gate)
+    else
+        insert!(new_indiv.ops, rand(1:length(new_indiv.ops)), gate)
+    end
     new_indiv.history = "gain_m"
     return new_indiv
 end
@@ -136,12 +60,21 @@ function swap_op(indiv::Individual)
     return new_indiv
 end
 
-function mutate(gate::NoisyBellMeasureNoisyReset)
-    return NoisyBellMeasureNoisyReset(rand(BellMeasure, gate.m.sidx), gate.p, gate.px, gate.py, gate.pz)
+#TODO adding noise
+function mutate(gate::Hgroup{N}) where N
+    new_gate=Hgroup{N}(rand(1:6),gate.ghz_idx1,gate.ghz_idx2)
+    return new_gate
 end
 
-function mutate(gate::PauliNoiseBellGate)
-    return PauliNoiseBellGate(rand(CNOTPerm, gate.g.idx1, gate.g.idx2), gate.px, gate.py, gate.pz)
+function mutate(gate::Fgroup{N}) where N
+    new_gate=Fgroup{N}(rand(1:8),gate.ghz_idx1,gate.ghz_idx2,gate.node_idx)
+    return new_gate
+end
+
+#not sure this need to be added.
+function mutate(gate::PauliGroup{N}) where N
+    new_gate=PauliGroup{N}(rand(1:3),gate.ghz_idx,gate.qubit_idx)
+    return new_gate
 end
 
 function mutate(indiv::Individual)
@@ -169,19 +102,10 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     return new_indiv
 end
 
-function total_raw_pairs(indiv::Individual) # priority 2
-
-end
-
-function generate_dataframe() # priority 3
-
-end
-
 mutable struct Population
     n::Int
-    k::Int
-    r::Int
-    cost_function
+    ghz_num::Int
+    qubit_num::Int
     f_in::Float64
     p2::Float64
     η::Float64
@@ -193,28 +117,32 @@ mutable struct Population
     pairs::Int
     children_per_pair::Int
     mutants_per_individual_per_type::Int
-    p_single_operation_mutates::Float64
     p_lose_operation::Float64
     p_add_operation::Float64
     p_swap_operations::Float64
     p_mutate_operations::Float64
     individuals::Vector{Individual}
     selection_history::Dict{String, Vector{Int64}}
-    num_simulations::Int
 end
 
-function initialize_pop!(population::Population)
-    population.individuals = [Individual("random", population.k, population.r, population.f_in, population.cost_function, [], Performance([], 0.0), 0.0) for i=1:population.population_size*population.starting_pop_multiplier]
-    Threads.@threads for indiv in population.individuals
-        num_gates = rand(1:population.starting_ops-1)
-        random_gates = [rand(CNOTPerm, (randperm(population.r)[1:2])...) for _ in 1:num_gates]
-        px = py = pz = (1 - population.p2)/4
-        px0 = py0 = pz0 = (1 - population.f_in)/3
-        noisy_random_gates = [PauliNoiseBellGate(g, px, py, pz) for g in random_gates]
-        random_measurements = [NoisyBellMeasureNoisyReset(rand(BellMeasure, rand(1:population.r)), 1-population.η, px0, py0, pz0) for _ in 1:(population.starting_ops-num_gates)]
-        all_ops = vcat(noisy_random_gates, random_measurements)
-        random_circuit = convert(Vector{Union{PauliNoiseBellGate{CNOTPerm},NoisyBellMeasureNoisyReset}}, all_ops[randperm(population.starting_ops)])
-        indiv.ops = random_circuit
+function ini_pop!(population::Population)
+    population.individuals = [Individual("random", population.qubit_num, population.ghz_num, population.f_in, [], 0.0, 0.0) for i=1:population.population_size*population.starting_pop_multiplier]
+    n=population.qubit_num
+    idx=population.ghz_num
+    for indiv in population.individuals
+
+        for i in rand(1:population.starting_ops)
+            if rand() < 0.5
+                #chance to add H gate to two random ghz state
+                perm=randperm(idx)[1:2]
+                gate = Hgroup{n}(rand(1:6),perm[1],perm[2])
+            else
+                #chance to add F gate to two random ghz state at random node.
+                perm=randperm(idx)[1:2]
+                gate = Fgroup{n}(rand(1:8),perm[1],perm[2],rand(1:idx-1))
+            end
+            push!(indiv.ops, gate)
+        end
     end
 end
 
@@ -224,9 +152,9 @@ end
 
 function sort!(population::Population) 
     Threads.@threads for indiv in population.individuals
-        calculate_performance!(indiv, population.num_simulations) 
+        calculate_performance!(indiv) 
     end
-    population.individuals = sort(population.individuals, by = x -> x.fitness, rev=true)
+    population.individuals = sort(population.individuals, by = x -> x.f_out, rev=true)
 end
 
 function step!(population::Population)
@@ -241,7 +169,7 @@ function step!(population::Population)
 
     for indiv in population.individuals[1:population.population_size]
         population.individuals = vcat(population.individuals, [drop_op(indiv) for i=1:population.mutants_per_individual_per_type if rand() < population.p_lose_operation && length(indiv.ops) > 0])
-        population.individuals = vcat(population.individuals, [gain_op(indiv, population.p2, population.η) for i=1:population.mutants_per_individual_per_type if rand() < population.p_add_operation && length(indiv.ops) < population.max_ops])
+        population.individuals = vcat(population.individuals, [gain_op(indiv) for i=1:population.mutants_per_individual_per_type if rand() < population.p_add_operation && length(indiv.ops) < population.max_ops])
         population.individuals = vcat(population.individuals, [swap_op(indiv) for i=1:population.mutants_per_individual_per_type if rand() < population.p_swap_operations && length(indiv.ops) > 0])
         population.individuals = vcat(population.individuals, [mutate(indiv) for i=1:population.mutants_per_individual_per_type if rand() < population.p_mutate_operations && length(indiv.ops) > 0])
     end
@@ -255,7 +183,7 @@ function run!(population::Population)
     for hist in ["manual", "survivor", "random", "child", "drop_m", "gain_m", "swap_m", "ops_m"]
         population.selection_history[hist] = Vector{Int64}()
     end
-    initialize_pop!(population)
+    ini_pop!(population)
     sort!(population)
     cull!(population)
     for i=1:population.max_gen
@@ -273,3 +201,86 @@ end
 function succ_probs(population::Population)
     return [i.performance.success_probability for i in population.individuals]
 end
+
+function calculate_performance!(indiv::Individual) 
+    n=indiv.qubit_num
+    idx=indiv.ghz_num
+    count=0 #counting success trials
+
+    #=
+    for i=1:t
+        state = rand(GHZState,n,idx,indiv.f_in)
+        for g in indiv.ops
+            if typeof(g) == NoisyMeasure
+                s, result=apply!(state,g)
+                if result == zeros(Int,n-1)
+                    count+=1
+
+                end
+            else
+                apply!(state,g)
+            end
+        end
+
+    end
+    =#
+    t=10000
+    fout=0
+    state_tobe_measured=rand(1:idx)
+    meas=GHZMeasure(n,3,state_tobe_measured)
+    NM=NoisyMeasure(meas,1)
+    for i in 1:t
+        state = rand(GHZState,n,idx,indiv.f_in)
+        for g in indiv.ops
+            apply!(state,g)
+        end
+
+        s, result=apply!(state,NM)
+
+        if result == zeros(Int,n-1)
+            count+=1
+            fout+=Int(s.phases[1:n] == zeros(Int,n))
+        end
+    end
+    indiv.success=count/t
+    indiv.f_out=fout/count
+end
+
+               #n,ghz,q,fin,p2,η,size,multi,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+POP=Population(5, 3, 3, 0.8, 1, 1, 100, 10, 10, 10, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+run!(POP)
+POP.individuals
+sort!(POP)
+op=POP.individuals[1].ops
+length(op)
+POP.individuals[1].success
+POP.individuals[1].f_out
+
+#test
+test=POP.individuals[1]
+calculate_performance!(test)
+tn=3 #qubit
+ti=2 #states
+t=10000
+
+meas=GHZMeasure(3,3,2)  #Z
+NM=NoisyMeasure(meas,1)
+
+c=0 #counting success trials
+fout=0
+for i in 1:t
+    state = GHZPreserving.rand(GHZState,tn,ti,0.8)
+    for g in test.ops
+        apply!(state,g)
+    end
+
+    s, result=apply!(state,NM)
+
+    if result == zeros(Int,tn-1)
+        c+=1
+        fout+=Int(s.phases[1:tn] == zeros(Int,tn))
+    end
+end
+s=c/t
+fout=fout/c
+
