@@ -60,7 +60,22 @@ function swap_op(indiv::Individual)
     return new_indiv
 end
 
-#TODO adding noise
+function mutate(gate)
+    N = typeof(gate).parameters[1]
+    idx1=gate.ghz_idx1
+    idx2=gate.ghz_idx2
+
+    if rand() < 0.5
+        new_gate=Hgroup{N}(rand(1:6),idx1,idx2)
+    else
+        node_idx = typeof(gate) <: Fgroup ? gate.node_idx : rand(1:N-1)  #if Fgroup, keep the node_idx, else randomize, this can be modify to fully randomize
+        new_gate=Fgroup{N}(rand(1:8),idx1,idx2,node_idx)
+    end
+
+    return new_gate
+end
+
+#=
 function mutate(gate::Hgroup{N}) where N
     new_gate=Hgroup{N}(rand(1:6),gate.ghz_idx1,gate.ghz_idx2)
     return new_gate
@@ -76,7 +91,7 @@ function mutate(gate::PauliGroup{N}) where N
     new_gate=PauliGroup{N}(rand(1:3),gate.ghz_idx,gate.qubit_idx)
     return new_gate
 end
-
+=#
 function mutate(indiv::Individual)
     new_indiv = deepcopy(indiv)
     new_indiv.ops = [mutate(gate) for gate in new_indiv.ops]
@@ -102,15 +117,15 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     return new_indiv
 end
 
+#TODO register number
+
 mutable struct Population
-    n::Int
     ghz_num::Int
     qubit_num::Int
     f_in::Float64
     p2::Float64
     η::Float64
     population_size::Int
-    starting_pop_multiplier::Int
     max_gen::Int
     max_ops::Int
     starting_ops::Int
@@ -126,12 +141,12 @@ mutable struct Population
 end
 
 function ini_pop!(population::Population)
-    population.individuals = [Individual("random", population.qubit_num, population.ghz_num, population.f_in, [], 0.0, 0.0) for i=1:population.population_size*population.starting_pop_multiplier]
+    population.individuals = [Individual("random", population.qubit_num, population.ghz_num, population.f_in, [], 0.0, 0.0) for _ =1:population.population_size]
     n=population.qubit_num
     idx=population.ghz_num
     for indiv in population.individuals
-
-        for i in rand(1:population.starting_ops)
+        num_ops=rand(1:population.starting_ops)
+        for i in 1:num_ops
             if rand() < 0.5
                 #chance to add H gate to two random ghz state
                 perm=randperm(idx)[1:2]
@@ -194,45 +209,25 @@ function run!(population::Population)
     end
 end
 
-function fidelities(population::Population)
-    return [i.fitness for i in population.individuals]
-end
-
-function succ_probs(population::Population)
-    return [i.performance.success_probability for i in population.individuals]
-end
+#TODO hashing?
 
 function calculate_performance!(indiv::Individual) 
     n=indiv.qubit_num
     idx=indiv.ghz_num
+    t=10000 #total number of trials
     count=0 #counting success trials
-
-    #=
-    for i=1:t
-        state = rand(GHZState,n,idx,indiv.f_in)
-        for g in indiv.ops
-            if typeof(g) == NoisyMeasure
-                s, result=apply!(state,g)
-                if result == zeros(Int,n-1)
-                    count+=1
-
-                end
-            else
-                apply!(state,g)
-            end
-        end
-
-    end
-    =#
-    t=10000
     fout=0
-    state_tobe_measured=rand(1:idx)
+    #=
+    state_tobe_measured=rand(2:n)
     meas=GHZMeasure(n,3,state_tobe_measured)
+    =#
+    meas=GHZMeasure(n,3,2)
     NM=NoisyMeasure(meas,1)
     for i in 1:t
         state = rand(GHZState,n,idx,indiv.f_in)
         for g in indiv.ops
             apply!(state,g)
+            #depolarize!(state,indiv.η)
         end
 
         s, result=apply!(state,NM)
@@ -246,10 +241,33 @@ function calculate_performance!(indiv::Individual)
     indiv.f_out=fout/count
 end
 
-               #n,ghz,q,fin,p2,η,size,multi,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(5, 3, 3, 0.8, 1, 1, 100, 10, 10, 10, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
-run!(POP)
+              #ghz,q,fin,p2,η,size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+POP=Population(2, 3, 0.8, 1, 1, 10, 10, 5, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+ini_pop!(POP)
+length(POP.individuals)
 POP.individuals
+for i in 1:10
+    for j in 1:length(POP.individuals[i].ops)
+        println(typeof(POP.individuals[i].ops[j]))
+    end
+    println(" ")
+end
+
+for i in 1:10
+    mutate(test.individuals[i])
+end
+
+for i in 1:10
+    calculate_performance!(POP.individuals[i])
+    println(POP.individuals[i].success)
+    println(POP.individuals[i].f_out)
+end
+
+POP.individuals[1].ops
+test=deepcopy(POP.individuals[1])
+mutate(test)
+
+run!(POP)
 sort!(POP)
 op=POP.individuals[1].ops
 length(op)
