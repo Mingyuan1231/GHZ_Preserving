@@ -1,4 +1,11 @@
-name = "GHZPreserving"
-uuid = "1f4f23df-ffc8-488b-81ef-28388eb8ca49"
-authors = ["Mingyuan <wmy19941231@gmail.com>"]
+name = "GHZ_Preserving"
+uuid = "7fbd0da0-4593-11ef-1a24-f732aec2bab6"
+authors = ["Mingyuan Wang <mingyuanwang@umass.edu>"]
 version = "0.1.0"
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+QuantumClifford = "0525e862-1e90-11e9-3e4d-1b39d7109de1"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
