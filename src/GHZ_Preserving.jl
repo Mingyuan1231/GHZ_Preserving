@@ -251,8 +251,8 @@ function Hgroup{N}(g,q1,q2) where N
     perm = HPerm_Cache[N]
 
     1 <= g <= 6 || throw(ArgumentError("Invalid gate index"))
-    1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
-    1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
+    #1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
+    #1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
     return Hgroup{N}(g,q1,q2,perm)
 end
 
@@ -284,8 +284,8 @@ function Fgroup{N}(g,q1,q2,node) where N
     perm = FPerm_Cache[N]
 
     1 <= g <= 8 || throw(ArgumentError("Invalid gate index"))
-    1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
-    1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
+    #1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
+    #1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
     1 <= node <= (N-1) || throw(ArgumentError("Invalid node index"))
     return Fgroup{N}(g,q1,q2,node,perm)
 end
@@ -429,7 +429,7 @@ function Measure!(s::GHZState, op::GHZMeasure)
     elseif op.basis_idx==1  #X measurement
         #the result of X basis should be the same as Z basis except +,- instead of 0,1
         measure_result=[s.phases[start_idx]] #X basis measurement result should be the phase of 1st stabilizer
-        s.phases[start_idx] .= 0 #reset the state to 0
+        s.phases[start_idx] = 0 #reset the state to 0
     #there is no simple Y measurement in GHZ state.
     end
     return s, measure_result
@@ -618,7 +618,7 @@ function depolarize!(s::GHZState, op::Fgroup, p::Float64)
     n=s.qubit_num
     i1=op.ghz_idx1
     i2=op.ghz_idx2
-    node=op.node
+    node=op.node_idx
 
     if rand()>p
         case1 = rand(1:4)
@@ -644,14 +644,21 @@ function QuantumClifford.apply!(s::GHZState, op::NoisyMeasure)
     state, result=Measure!(s, op.m)
     n=s.qubit_num
 
-    #error in coincidence measurement.
-    r=Bernoulli(op.p)
-    measurement_errors = [rand(r) for _ in 1:n]
-    error_phase = [i ⊻ j for (i, j) in zip(
-        measurement_errors[begin:end-1], measurement_errors[2:end])]
+    if op.m.basis_idx==3  #Z measurement
+        #error in coincidence measurement.
+        r=Bernoulli(op.p)
+        measurement_errors = [rand(r) for _ in 1:n]
+        error_phase = [i ⊻ j for (i, j) in zip(
+            measurement_errors[begin:end-1], measurement_errors[2:end])]
 
-    result .= result .⊻ error_phase
-    return state, result
+        result .= result .⊻ error_phase
+        return state, result
+    else #X measurement
+        if rand() > op.p
+            result .= result .⊻ 1
+        end
+        return state, result
+    end
 end
 
 
@@ -661,11 +668,10 @@ Noisy measurement and Pauli noise after the reset
 struct NoisyMeasureNoisyReset
     m::GHZMeasure
     p::Float64
-    px::Float64
-    py::Float64
-    pz::Float64
+    f_in::Float64
 end
 
+#=
 function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure)
     state, result=Measure!(s, op.m)
     original_result = copy(result)
@@ -679,7 +685,49 @@ function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure)
         return state, continue_stat
     end
 end
+=#
 
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure, f_in::Float64=1.0)
+    state, result=Measure!(s, op.m)
+    n=s.qubit_num
+
+    if op.m.basis_idx==3  #Z measurement
+        #error in coincidence measurement.
+        r=Bernoulli(op.p)
+        measurement_errors = [rand(r) for _ in 1:n]
+        error_phase = [i ⊻ j for (i, j) in zip(
+            measurement_errors[begin:end-1], measurement_errors[2:end])]
+
+        result .= result .⊻ error_phase
+        
+        if result == zeros(Int, n-1)
+            #if success, insert a new state
+            new_state = rand(GHZState, n, 1, f_in)
+            idx=op.m.ghz_idx
+            state.phases[(idx-1)*n+1:idx*n] = new_state.phases
+
+            return state, continue_stat
+        else
+            return state, failure_stat
+        end
+
+    else #X measurement
+        if rand() > op.p
+            result .= result .⊻ 1
+        end
+
+        if result == zeros(Int, 1)
+            #if success, insert a new state
+            new_state = rand(GHZState, n, 1, f_in)
+            idx=op.m.ghz_idx
+            state.phases[(idx-1)*n+1:idx*n] = new_state.phases
+
+            return state, continue_stat
+        else
+            return state, failure_stat
+        end
+    end
+end
 
 function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasureNoisyReset)
     state, result = Measure!(s, op.m)

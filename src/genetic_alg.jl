@@ -6,10 +6,14 @@ using Statistics
 
 mutable struct Individual
     history::String
-    qubit_num::Int
-    ghz_num::Int
+    n::Int
+    q::Int
+    k::Int
+    r::Int
     f_in::Float64
-    ops::Vector{Union{Hgroup,Fgroup}} #modify?
+    p2::Float64
+    η::Float64
+    ops::Vector{Union{Hgroup,Fgroup,NoisyMeasure}}
     success::Float64
     f_out::Float64
 end 
@@ -21,24 +25,30 @@ function drop_op(indiv::Individual)
     return new_indiv
 end
 
-#TODO adding noise
+
 function gain_op(indiv::Individual)
     new_indiv = deepcopy(indiv)
-    n=indiv.qubit_num
-    idx=indiv.ghz_num
-    if rand() < 0.0 #no measurement adding for now
+    n=indiv.n
+    q=indiv.q
+    k=indiv.k
+    r=indiv.r
+
+    #measure number
+    measure_count = count(op -> isa(op,NoisyMeasure), indiv.ops)
+
+    if rand() < 0.2 && measure_count < (n-r) #adding measurement
         #chance to measure
         #rand[1,3] as X or Z measure, no Y for now, measure random ghz state
-        measure=GHZMeasure(n,3,rand(1:idx))  #3 tobe edit later as measure basis, Z for now
-        gate=NoisyMeasre(measure,1)    #1 tobe edit later as noise level, no noise for now
+        measure=GHZMeasure(n,3,rand(k+1:idx))  #3 tobe edit later as measure basis Z for now; as keep k result state, so only measure (k+1:idx) state. 
+        gate=NoisyMeasure(measure, indiv.η)    #1 tobe edit later as noise level, no noise for now
     elseif rand() < 0.5
         #chance to add H gate to two random ghz state
-        perm=randperm(idx)[1:2]
-        gate = Hgroup{n}(rand(1:6),perm[1],perm[2])
+        perm=randperm(n)[1:2]
+        gate = Hgroup{q}(rand(1:6),perm[1],perm[2])
     else
         #chance to add F gate to two random ghz state at random node.
-        perm=randperm(idx)[1:2]
-        gate = Fgroup{n}(rand(1:8),perm[1],perm[2],rand(1:idx-1))
+        perm=randperm(n)[1:2]
+        gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
     end
 
     if length(new_indiv.ops) == 0
@@ -46,6 +56,7 @@ function gain_op(indiv::Individual)
     else
         insert!(new_indiv.ops, rand(1:length(new_indiv.ops)), gate)
     end
+
     new_indiv.history = "gain_m"
     return new_indiv
 end
@@ -61,10 +72,24 @@ function swap_op(indiv::Individual)
 end
 
 function mutate(gate)
+    #if it is a measure, then mutate to different basis
+    if isa(gate, NoisyMeasure)
+        current_measure=gate.m
+        n=current_measure.n
+        idx=current_measure.ghz_idx
+        new_basis=current_measure.basis_idx == 1 ? 3 : 1
+
+        new_measure=GHZMeasure(n,new_basis,idx)
+        p=gate.p
+
+        return NoisyMeasure(new_measure,p)
+    end
+
+    #if it is Hgroup or Fgroup, then mutate to random different gate
     N = typeof(gate).parameters[1]
     idx1=gate.ghz_idx1
     idx2=gate.ghz_idx2
-
+    
     if rand() < 0.5
         new_gate=Hgroup{N}(rand(1:6),idx1,idx2)
     else
@@ -75,23 +100,6 @@ function mutate(gate)
     return new_gate
 end
 
-#=
-function mutate(gate::Hgroup{N}) where N
-    new_gate=Hgroup{N}(rand(1:6),gate.ghz_idx1,gate.ghz_idx2)
-    return new_gate
-end
-
-function mutate(gate::Fgroup{N}) where N
-    new_gate=Fgroup{N}(rand(1:8),gate.ghz_idx1,gate.ghz_idx2,gate.node_idx)
-    return new_gate
-end
-
-#not sure this need to be added.
-function mutate(gate::PauliGroup{N}) where N
-    new_gate=PauliGroup{N}(rand(1:3),gate.ghz_idx,gate.qubit_idx)
-    return new_gate
-end
-=#
 function mutate(indiv::Individual)
     new_indiv = deepcopy(indiv)
     new_indiv.ops = [mutate(gate) for gate in new_indiv.ops]
@@ -100,6 +108,9 @@ function mutate(indiv::Individual)
 end
 
 function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
+    n=indiv.n
+    k=indiv.k
+    r=indiv.r
     new_indiv = deepcopy(indiv)
     ops1, ops2 = indiv.ops, indiv2.ops
     if rand() < 0.5
@@ -112,16 +123,42 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     if rand() < 0.5
         ops2 = ops2[end:-1:1]
     end
-    new_indiv.ops = vcat(ops1[1:rand(1:min(length(ops1), max_ops))], ops2[1:rand(1:length(ops2))])[1:min(end, max_ops)]
+
+    #random select operation
+    combined_ops = vcat(ops1, ops2)
+    select_ops = combined_ops[randperm(length(combined_ops))[1:min(length(combined_ops), max_ops)]]
+    
+    #delete extra measures, the number limit for middle step measure is n-r
+    measure_count = count(op -> isa(op,NoisyMeasure), select_ops)
+    while measure_count > (n-r)
+        for i in eachindex(combined_ops)
+            if isa(select_ops[i],NoisyMeasure)
+                deleteat!(combined_ops, i)
+                measure_count -= 1
+                break
+            end
+        end
+    end
+
+    #add measure to the end of the circuit, always keep first k state, measure the rest
+    for i in k+1:r
+        basis=rand([1,3]) #1 for X, 3 for Z
+        measure=GHZMeasure(q,basis,i)
+        gate=NoisyMeasure(measure,indiv.η)
+        push!(indiv.ops, gate)
+    end
+
+    new_indiv.ops = select_ops
     new_indiv.history = "child"
     return new_indiv
 end
 
-#TODO register number
 
 mutable struct Population
-    ghz_num::Int
-    qubit_num::Int
+    n::Int
+    q::Int
+    k::Int
+    r::Int
     f_in::Float64
     p2::Float64
     η::Float64
@@ -141,21 +178,33 @@ mutable struct Population
 end
 
 function ini_pop!(population::Population)
-    population.individuals = [Individual("random", population.qubit_num, population.ghz_num, population.f_in, [], 0.0, 0.0) for _ =1:population.population_size]
-    n=population.qubit_num
-    idx=population.ghz_num
+    population.individuals = [Individual("random", population.n, population.q, population.k, population.r, population.f_in, population.p2, population.η, [], 0.0, 0.0) for _ =1:population.population_size]
+    n=population.n
+    q=population.q
+    k=population.k
+    r=population.r
+
     for indiv in population.individuals
-        num_ops=rand(1:population.starting_ops)
+        #adding random gates
+        num_ops=rand(1:population.starting_ops-1)
         for i in 1:num_ops
             if rand() < 0.5
                 #chance to add H gate to two random ghz state
-                perm=randperm(idx)[1:2]
-                gate = Hgroup{n}(rand(1:6),perm[1],perm[2])
+                perm=randperm(n)[1:2]
+                gate = Hgroup{q}(rand(1:6),perm[1],perm[2])
             else
                 #chance to add F gate to two random ghz state at random node.
-                perm=randperm(idx)[1:2]
-                gate = Fgroup{n}(rand(1:8),perm[1],perm[2],rand(1:idx-1))
+                perm=randperm(n)[1:2]
+                gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
             end
+            push!(indiv.ops, gate)
+        end
+
+        #add measure to the end of the circuit, always keep first k state, measure the rest
+        for i in k+1:r
+            basis=rand([1,3]) #1 for X, 3 for Z
+            measure=GHZMeasure(q,basis,i)
+            gate=NoisyMeasure(measure,population.η)
             push!(indiv.ops, gate)
         end
     end
@@ -194,7 +243,6 @@ function step!(population::Population)
 end
 
 function run!(population::Population)
-    println(Threads.nthreads())
     for hist in ["manual", "survivor", "random", "child", "drop_m", "gain_m", "swap_m", "ops_m"]
         population.selection_history[hist] = Vector{Int64}()
     end
@@ -212,52 +260,68 @@ end
 #TODO hashing?
 
 function calculate_performance!(indiv::Individual) 
-    n=indiv.qubit_num
-    idx=indiv.ghz_num
+    n=indiv.n
+    q=indiv.q
+    
     t=10000 #total number of trials
     count=0 #counting success trials
     fout=0
-    #=
-    state_tobe_measured=rand(2:n)
-    meas=GHZMeasure(n,3,state_tobe_measured)
-    =#
-    meas=GHZMeasure(n,3,2)
-    NM=NoisyMeasure(meas,1)
+
     for i in 1:t
-        state = rand(GHZState,n,idx,indiv.f_in)
+        state = rand(GHZState,q,n,indiv.f_in)
+        status = continue_stat
+ 
         for g in indiv.ops
-            apply!(state,g)
-            #depolarize!(state,indiv.η)
+            if isa(g,NoisyMeasure)
+                state, status=applywstatus!(state, g, indiv.f_in)
+                #if fail, break the loop
+                if status == failure_stat
+                    break
+                end
+                
+            else
+                apply!(state,g)
+                depolarize!(state, g, indiv.p2)
+            end
         end
 
-        s, result=apply!(state,NM)
-
-        if result == zeros(Int,n-1)
+        if status == continue_stat
             count+=1
-            fout+=Int(s.phases[1:n] == zeros(Int,n))
+            fout+=Int(state.phases[1:q] == zeros(Int,q))
         end
     end
     indiv.success=count/t
     indiv.f_out=fout/count
 end
 
-              #ghz,q,fin,p2,η,size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(2, 3, 0.8, 1, 1, 10, 10, 5, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+              #n, q, k, r, fin,p2,η,size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+POP=Population(2, 3, 1, 2, 0.8, 1, 1, 20, 10, 6, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 ini_pop!(POP)
+step!(POP)
 length(POP.individuals)
 POP.individuals
-for i in 1:10
+for i in 1:20
     for j in 1:length(POP.individuals[i].ops)
         println(typeof(POP.individuals[i].ops[j]))
     end
     println(" ")
 end
 
-for i in 1:10
-    mutate(test.individuals[i])
+idv=POP.individuals[1]
+length(idv.ops)
+for op in idv.ops
+    println(op)
 end
+tests=rand(GHZState,3,2,0.5)
+mctrajectory!(tests, idv.ops)
+idv.ops[2]
+ts,tr=applywstatus!(tests, idv.ops[2],0.8)
 
 for i in 1:10
+    mutate(POP.individuals[i])
+end
+
+for i in 1:20
     calculate_performance!(POP.individuals[i])
     println(POP.individuals[i].success)
     println(POP.individuals[i].f_out)
@@ -273,32 +337,4 @@ op=POP.individuals[1].ops
 length(op)
 POP.individuals[1].success
 POP.individuals[1].f_out
-
-#test
-test=POP.individuals[1]
-calculate_performance!(test)
-tn=3 #qubit
-ti=2 #states
-t=10000
-
-meas=GHZMeasure(3,3,2)  #Z
-NM=NoisyMeasure(meas,1)
-
-c=0 #counting success trials
-fout=0
-for i in 1:t
-    state = GHZPreserving.rand(GHZState,tn,ti,0.8)
-    for g in test.ops
-        apply!(state,g)
-    end
-
-    s, result=apply!(state,NM)
-
-    if result == zeros(Int,tn-1)
-        c+=1
-        fout+=Int(s.phases[1:tn] == zeros(Int,tn))
-    end
-end
-s=c/t
-fout=fout/c
-
+tests
