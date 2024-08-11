@@ -36,7 +36,7 @@ function gain_op(indiv::Individual)
     #measure number
     measure_count = count(op -> isa(op,NoisyMeasure), indiv.ops)
 
-    if rand() < 0.2 && measure_count < (n-r) #adding measurement
+    if rand() < 0.2 && measure_count < (n-k) #adding measurement
         #chance to measure
         #rand[1,3] as X or Z measure, no Y for now, measure random ghz state
         measure=GHZMeasure(n,rand([1,3]),rand(k+1:r))  #as keep k result state, so only measure (k+1:r) state. 
@@ -215,37 +215,36 @@ function cull!(population::Population)
     population.individuals = population.individuals[1:population.population_size]
 end
 
+#=
 function sort!(population::Population)
     Threads.@threads for indiv in population.individuals
         calculate_performance!(indiv)
     end
 
-    # 使用自定义比较逻辑排序，并添加了数组长度的检查
     population.individuals = sort(population.individuals, lt=(x, y) -> begin
-        # 检查每个个体的 f_out 是否足够长
         if length(x.f_out) < 2 || length(y.f_out) < 2
-            # 如果任一个体的 f_out 不包含至少两个元素，则退回到只比较第一个元素
+            # return first one if k less than 2
             return x.f_out[1] > y.f_out[1]
         else
-            # 比较第一个fidelity
+            # compare first fidelity
             if abs(x.f_out[1] - y.f_out[1]) / max(x.f_out[1], y.f_out[1]) < 0.05
-                # 如果第一个fidelity差别小于5%，比较第二个
+                # if the difference is less than 5%, compare the second
                 return x.f_out[2] > y.f_out[2]
             else
-                # 否则只比较第一个
                 return x.f_out[1] > y.f_out[1]
             end
         end
     end)
 end
-#=
+=#
+
 function sort!(population::Population) 
     Threads.@threads for indiv in population.individuals
         calculate_performance!(indiv) 
     end
     population.individuals = sort(population.individuals, by = x -> x.f_out, rev=true)
 end
-=#
+
 
 function step!(population::Population)
     for indiv in population.individuals
@@ -338,8 +337,8 @@ function show(io::IO, fg::Fgroup{N}) where N
     print(io, "Fgroup{$N}($(fg.gate_idx), $(fg.ghz_idx1), $(fg.ghz_idx2), $(fg.node_idx))")
 end
 
-              #n, q, k, r, fin,p2,η,size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(5, 3, 2, 4, 0.8, 0.99, 1, 20, 10, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+              #n, q, k, r, fin,   p2, η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+POP=Population(5, 3, 1, 3, 0.8, 0.99, 1, 20, 30, 30, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 ini_pop!(POP)
 sort!(POP)
 cull!(POP)
@@ -364,6 +363,10 @@ for op in idv.ops
     println(op)
 end
 
+for j in 1:length(idv.ops)
+    println(typeof(idv.ops[j]))
+end
+
 idv2=POP.individuals[2]
 length(idv2.ops)
 for op in idv2.ops
@@ -383,16 +386,11 @@ for i in 1:20
     println(POP.individuals[i].f_out)
 end
 
-
+mean(POP.individuals[1].f_out)
 testsucc_dict=Dict{Tuple{Float64,Float64},Float64}()
 testfide_dict=Dict{Tuple{Float64,Float64},Float64}()
-for fin in 0:0.1:1
-    POP=Population(5, 3, 2, 4, fin, 0.99, 1, 20, 10, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
-    run!(POP)
-    testsucc_dict[(0.99,fin)]=mean([indiv.success for indiv in POP.individuals])
-    testfide_dict[(0.99,fin)]=mean([mean(indiv.f_out) for indiv in POP.individuals])
-end
 
+using Plots
 
 p2_values = [0.99]
 for p2 in p2_values
@@ -413,3 +411,41 @@ for p2 in p2_values
     #plot!(p_fidelity, fin_values[sorted_indices], fidelities[sorted_indices], fillalpha=0.3, label="p2 = $p2")
     plot!(p, fin_values[sorted_indices], fidelities[sorted_indices], fillalpha=0.3, label="p2 = $p2")
 end
+
+
+
+for n in 5:10
+    for r in 3:5
+        POP=Population(n, 3, 1, r, 0.8, 0.99, 1, 20, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+        run!(POP)
+        testsucc_dict[(n,r)]=mean([indiv.success for indiv in POP.individuals])
+        testfide_dict[(n,r)]=mean([mean(indiv.f_out) for indiv in POP.individuals])
+    end
+end
+
+
+n_values = sort(unique([key[1] for key in keys(testfide_dict)]))
+r_values = sort(unique([key[2] for key in keys(testfide_dict)]))
+
+
+p = plot(xlabel="n", ylabel="Fidelity", title="Fidelity vs n for Different r")
+
+
+for r in r_values
+    fidelities = [get(testfide_dict, (n, r), NaN) for n in n_values]  # 使用 get 防止缺失数据导致错误
+    plot!(p, n_values, fidelities, label="r = $r", marker=:circle)
+end
+
+
+ps = plot(xlabel="n", ylabel="Success rate", title="Success rate vs n for Different r")
+
+for r in r_values
+    successes = [get(testsucc_dict, (n, r), NaN) for n in n_values]  # 使用 get 防止缺失数据导致错误
+    plot!(ps, n_values, successes, label="r = $r", marker=:circle)
+end
+
+
+display(ps)
+
+pp = plot(p, ps, layout=(2, 1))
+
