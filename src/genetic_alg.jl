@@ -1,3 +1,4 @@
+##
 using .GHZPreserving
 using QuantumClifford
 using QuantumClifford.Experimental.NoisyCircuits
@@ -90,11 +91,14 @@ function mutate(gate)
     idx1=gate.ghz_idx1
     idx2=gate.ghz_idx2
     
-    if rand() < 0.5
+    prob=rand()
+    if prob < 0.3
         new_gate=Hgroup{N}(rand(1:6),idx1,idx2)
-    else
+    elseif prob < 0.6
         node_idx = typeof(gate) <: Fgroup ? gate.node_idx : rand(1:N-1)  #if Fgroup, keep the node_idx, else randomize, this can be modify to fully randomize
         new_gate=Fgroup{N}(rand(1:8),idx1,idx2,node_idx)
+    else
+        new_gate=gate
     end
 
     return new_gate
@@ -238,15 +242,23 @@ function sort!(population::Population)
 end
 =#
 
-function sort!(population::Population) 
+function sort!(population::Population, current_gen::Int) 
     Threads.@threads for indiv in population.individuals
-        calculate_performance!(indiv) 
+        calculate_performance!(indiv,current_gen) 
     end
     population.individuals = sort(population.individuals, by = x -> x.f_out, rev=true)
+
+    new_indiv=[]
+    prob=rand()
+    for i in 1:length(population.individuals)
+        if prob < 0.8
+            push!(new_indiv,population.individuals[i])
+        end
+    end
 end
 
 
-function step!(population::Population)
+function step!(population::Population,current_gen::Int)
     for indiv in population.individuals
         indiv.history = "survivor"
     end
@@ -263,7 +275,7 @@ function step!(population::Population)
         population.individuals = vcat(population.individuals, [mutate(indiv) for i=1:population.mutants_per_individual_per_type if rand() < population.p_mutate_operations && length(indiv.ops) > 0])
     end
 
-    sort!(population)
+    sort!(population,current_gen)
     cull!(population)
 end
 
@@ -272,10 +284,10 @@ function run!(population::Population)
         population.selection_history[hist] = Vector{Int64}()
     end
     ini_pop!(population)
-    sort!(population)
+    sort!(population,1)
     cull!(population)
     for i=1:population.max_gen
-        step!(population)
+        step!(population,i)
         for hist in ["manual", "survivor", "random", "child", "drop_m", "gain_m", "swap_m", "ops_m"]
             push!(population.selection_history[hist], reduce(+, [1 for indiv in population.individuals if indiv.history==hist], init=0))
         end
@@ -284,13 +296,13 @@ end
 
 #TODO hashing?
 
-function calculate_performance!(indiv::Individual) 
+function calculate_performance!(indiv::Individual, current_gen::Int) 
     n=indiv.n
     q=indiv.q
     k=indiv.k
     r=indiv.r
     
-    t=10000 #total number of trials
+    t=1000*current_gen #total number of trials
     count = 0 #counting success trials
     fout = zeros(Int, k) #fidelity
 
@@ -327,7 +339,60 @@ function calculate_performance!(indiv::Individual)
     indiv.f_out=fout/count
 end
 
+#=
+function calculate_performance!(indiv::Individual; num_trials=1000, num_runs=10)
+    n = indiv.n
+    q = indiv.q
+    k = indiv.k
+    r = indiv.r
 
+    # Prepare to collect fidelity results from multiple runs
+    all_fout = Array{Float64}(undef, k, num_runs)
+
+    # Run the simulation multiple times
+    for run in 1:num_runs
+        count = 0  # counting success trials
+        fout = zeros(Int, k)  # fidelity
+
+        for i in 1:num_trials
+            state = rand(GHZState, q, n, indiv.f_in)
+            status = continue_stat
+
+            for g in indiv.ops
+                if isa(g, NoisyMeasure)
+                    state, status = applywstatus!(state, g, indiv.f_in)
+                    # if fail, break the loop
+                    if status == failure_stat
+                        break
+                    end
+                else
+                    apply!(state, g)
+                    depolarize!(state, g, indiv.p2)
+                end
+            end
+
+            if status == continue_stat
+                count += 1
+                for j in 1:k
+                    start_idx = (j - 1) * q + 1
+                    end_idx = j * q
+                    fout[j] += Int(state.phases[start_idx:end_idx] == zeros(Int, q))
+                end
+            end
+        end
+
+        # Store the results of this run
+        all_fout[:, run] = fout ./ count
+    end
+
+    # Calculate mean and standard deviation across runs for each fidelity
+    mean_fout = mean(all_fout, dims=2)
+    std_fout = std(all_fout, dims=2)
+
+    # Store the results in indiv.f_out as a flattened array [mean1, std1, mean2, std2, ..., meank, stdk]
+    indiv.f_out = vcat(mean_fout[:], std_fout[:])
+end
+=#
 import Base.show
 function show(io::IO, hg::Hgroup{N}) where N
     print(io, "Hgroup{$N}($(hg.gate_idx), $(hg.ghz_idx1), $(hg.ghz_idx2))")
@@ -337,8 +402,11 @@ function show(io::IO, fg::Fgroup{N}) where N
     print(io, "Fgroup{$N}($(fg.gate_idx), $(fg.ghz_idx1), $(fg.ghz_idx2), $(fg.node_idx))")
 end
 
-              #n, q, k, r, fin,   p2, η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(5, 3, 1, 3, 0.8, 0.99, 1, 20, 30, 30, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+##
+
+
+              #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+POP=Population(3, 3, 1, 3, 0.8, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 ini_pop!(POP)
 sort!(POP)
 cull!(POP)
@@ -357,11 +425,27 @@ end
 run!(POP)
 
 
-idv=POP.individuals[1]
+@benchmark calculate_performance!.(POP.individuals)
+
+idv=deepcopy(POP.individuals[1])
 length(idv.ops)
 for op in idv.ops
     println(op)
 end
+
+ff=[]
+for i in 1:10
+    push!(ff,calculate_performance!(idv,10))
+end
+mean(ff)
+std(ff)
+
+using BenchmarkTools
+@benchmark 
+calculate_performance!(idv)
+@benchmark sort!(POP)
+@benchmark cull!(POP)
+
 
 for j in 1:length(idv.ops)
     println(typeof(idv.ops[j]))
@@ -373,6 +457,18 @@ for op in idv2.ops
     println(op)
 end
 
+idv3=POP.individuals[3]
+length(idv3.ops)
+for op in idv3.ops
+    println(op)
+end
+
+idv.ops
+idv2.ops
+idv3.ops
+idv.ops.==idv2.ops
+
+
 child=new_child(idv,idv2,10)
 child.ops
 
@@ -381,7 +477,7 @@ length(child.ops)
 
 
 for i in 1:20
-    calculate_performance!(POP.individuals[i])
+    #calculate_performance!(POP.individuals[i])
     println(POP.individuals[i].success)
     println(POP.individuals[i].f_out)
 end
