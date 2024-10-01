@@ -5,7 +5,7 @@ using LinearAlgebra
 using Random
 using Distributions
 
-export GHZState, GHZMeasure, GHZGate, Measure!, rand,
+export GHZState, GHZMeasure, GHZGate, Measure!, rand, tensor!,
     Hgroup, Fgroup, PauliGroup,
     CNOT, CZ, F1, depolarize!, 
     PauliNoiseOp, NoisyMeasure, NoisyMeasureNoisyReset
@@ -390,6 +390,23 @@ define "*" operation for GHZOp
 function Base.:(*)(op::GHZOp, s::GHZState; phases::Bool=true)
     s = copy(s)
     apply!(s,op)
+end
+
+"""
+define tensor! operation for GHZ state
+"""
+function tensor!(s1::GHZState, s2::GHZState)
+    q1 = s1.qubit_num
+    q2 = s2.qubit_num
+    
+    if q1 != q2
+        throw(ArgumentError("Qubit num should be same to preserve"))
+    end
+
+    n1 = s1.ghz_num
+    n2 = s2.ghz_num
+
+    return GHZState(q1, n1+n2, vcat(s1.phases, s2.phases))
 end
 
 ################################

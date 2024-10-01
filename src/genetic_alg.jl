@@ -406,26 +406,10 @@ end
 
 
               #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(3, 3, 1, 3, 0.8, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
-ini_pop!(POP)
-sort!(POP)
-cull!(POP)
-
-step!(POP)
-
-length(POP.individuals)
-POP.individuals
-for i in 1:20
-    for j in 1:length(POP.individuals[i].ops)
-        println(typeof(POP.individuals[i].ops[j]))
-    end
-    println(" ")
-end
+POP=Population(4, 3, 1, 3, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run!(POP)
 
-
-@benchmark calculate_performance!.(POP.individuals)
 
 idv=deepcopy(POP.individuals[1])
 length(idv.ops)
@@ -439,6 +423,28 @@ for i in 1:10
 end
 mean(ff)
 std(ff)
+
+fide_data=Dict{Tuple{Int,Int,Float64},Vector}()
+succ_data=Dict{Tuple{Int,Int,Float64},Float64}()
+
+for i in 4:8
+    for regi in 3:i #register number should equal or less than raw state number, more register is redundant
+        for j in 0.7:0.025:1.0
+        POP=Population(i, 3, 1, regi, j, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+        run!(POP)
+ 
+        fide_data[(i,regi,j)]=POP.individuals[1].f_out
+        succ_data[(i,regi,j)]=POP.individuals[1].success
+        end
+    end
+end
+
+fide_cache=deepcopy(fide_data)
+succ_cache=deepcopy(succ_data)
+
+
+
+
 
 using BenchmarkTools
 @benchmark 
