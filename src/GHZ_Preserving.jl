@@ -500,6 +500,10 @@ function QuantumClifford.apply!(s::GHZState, g::GHZGate)
     return s
 end
 
+function QuantumClifford._apply!(s::GHZState, g::GHZGate)
+    return QuantumClifford.apply!(s, g)
+end
+
 #region good operations
 
 #########################
@@ -855,7 +859,7 @@ Random measurement on ghz state i
 function Random.rand(::Type{GHZMeasure}, n::Int)
     b=rand([1,3])   #no 2 as no Y for now.
     i=rand(1:n)
-    return GHZMeasure(b,i)
+    return GHZMeasure(n,b,i)
 end
 
 #endregion

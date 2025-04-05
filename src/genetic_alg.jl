@@ -44,11 +44,11 @@ function gain_op(indiv::Individual)
         gate=NoisyMeasure(measure, indiv.η)
     elseif rand() < 0.5
         #chance to add H gate to two random ghz state
-        perm=randperm(n)[1:2]
+        perm=randperm(r)[1:2]
         gate = Hgroup{q}(rand(1:6),perm[1],perm[2])
     else
         #chance to add F gate to two random ghz state at random node.
-        perm=randperm(n)[1:2]
+        perm=randperm(r)[1:2]
         gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
     end
 
@@ -195,11 +195,11 @@ function ini_pop!(population::Population)
         for i in 1:num_ops
             if rand() < 0.5
                 #chance to add H gate to two random ghz state
-                perm=randperm(n)[1:2]
+                perm=randperm(r)[1:2]
                 gate = Hgroup{q}(rand(1:6),perm[1],perm[2])
             else
                 #chance to add F gate to two random ghz state at random node.
-                perm=randperm(n)[1:2]
+                perm=randperm(r)[1:2]
                 gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
             end
             push!(indiv.ops, gate)
@@ -307,7 +307,7 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
     fout = zeros(Int, k) #fidelity
 
     for i in 1:t
-        state = rand(GHZState,q,n,indiv.f_in)
+        state = rand(GHZState,q,r,indiv.f_in) # only need to consider r raw states, as constraint by register number.
         status = continue_stat
  
         for g in indiv.ops
@@ -406,7 +406,7 @@ end
 
 
               #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(4, 3, 1, 3, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+POP=Population(5, 3, 1, 4, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run!(POP)
 
