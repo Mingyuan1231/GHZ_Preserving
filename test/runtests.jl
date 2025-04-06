@@ -1,5 +1,5 @@
 using Test
-using .GHZPreserving
+using GHZPreserving
 
 include("test_state.jl")
 include("test_gate.jl")

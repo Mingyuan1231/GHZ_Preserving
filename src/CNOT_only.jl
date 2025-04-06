@@ -1,5 +1,5 @@
 ##
-using .GHZPreserving
+using .GHZ_Preserving
 using QuantumClifford
 using QuantumClifford.Experimental.NoisyCircuits
 using Random
@@ -297,7 +297,7 @@ end
 ##
 
 
-              #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
+                #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
 POP_H=Population(5, 3, 1, 4, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run_H_only!(POP_H)
@@ -307,3 +307,32 @@ length(idv.ops)
 for op in idv.ops
     println(op)
 end
+
+
+##
+using Plots
+
+fide_data=Dict{Tuple{Int,Int,Float64},Vector}()
+succ_data=Dict{Tuple{Int,Int,Float64},Float64}()
+circuit_data=[]
+
+for i in 4:8
+    for regi in 3:i #register number should equal or less than raw state number, more register is redundant
+        for j in 0.7:0.025:1.0
+        POP=Population(i, 3, 1, regi, j, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+        run_H_only!(POP)
+ 
+        fide_data[(i,regi,j)]=POP.individuals[1].f_out
+        succ_data[(i,regi,j)]=POP.individuals[1].success
+        push!(circuit_data,POP.individuals[1]) # save the best circuit for plotting later
+        end
+    end
+end
+
+##
+open("circuit_data.txt", "w") do io
+    for line in circuit_data
+        println(io, line)
+    end
+end
+##

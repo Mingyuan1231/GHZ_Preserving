@@ -1,4 +1,4 @@
-module GHZPreserving
+module GHZ_Preserving
 
 using QuantumClifford
 using LinearAlgebra
@@ -488,14 +488,14 @@ function QuantumClifford.apply!(s::GHZState, g::GHZGate)
     m=s.ghz_num
     
     #apply H group
-    apply!(s,Hgroup(g.H,g.ghz_idx1,g.ghz_idx2))
+    apply!(s,Hgroup{n}(g.H,g.ghz_idx1,g.ghz_idx2))
     #apply F group
     for i in 1:n-1
-        apply!(s,Fgroup(g.F[i],g.ghz_idx1,g.ghz_idx2,i))
+        apply!(s,Fgroup{n}(g.F[i],g.ghz_idx1,g.ghz_idx2,i))
     end
     #apply Pauli group
     for i in 1:n
-        apply!(s,PauliGroup(g.Paulis[i],g.ghz_idx1,i))
+        apply!(s,PauliGroup{n}(g.Paulis[i],g.ghz_idx1,i))
     end
     return s
 end
