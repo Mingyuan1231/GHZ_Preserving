@@ -1,4 +1,4 @@
-name = "GHZ_Preserving"
+name = "GHZPreserving"
 uuid = "7fbd0da0-4593-11ef-1a24-f732aec2bab6"
 authors = ["Mingyuan Wang <mingyuanwang@umass.edu>"]
 version = "0.1.0"

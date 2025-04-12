@@ -1,5 +1,5 @@
 ##
-using .GHZ_Preserving
+using GHZPreserving
 using QuantumClifford
 using QuantumClifford.Experimental.NoisyCircuits
 using Random
@@ -14,7 +14,7 @@ mutable struct Individual
     f_in::Float64   #input fidelity
     p2::Float64     #depolarizing noise level
     η::Float64      #measurement noise level
-    ops::Vector{Union{Hgroup,Fgroup,NoisyMeasure}}
+    ops::Vector{Union{Hgroup,Bgroup,NoisyGHZMeasure}}
     success::Float64
     f_out::Vector{Float64}
 end 
@@ -33,11 +33,11 @@ function gain_op_H_only(indiv::Individual)
     k=indiv.k
     r=indiv.r
 
-    measure_count = count(op -> isa(op, NoisyMeasure), indiv.ops)
+    measure_count = count(op -> isa(op, NoisyGHZMeasure), indiv.ops)
 
     if rand() < 0.3 && measure_count < (n - k)
         measure = GHZMeasure(n, rand([1, 3]), rand(k+1:r))
-        gate = NoisyMeasure(measure, indiv.η)
+        gate = NoisyGHZMeasure(measure, indiv.η)
     else
         perm = randperm(r)[1:2]
         gate = Hgroup{q}(2, perm[1], perm[2])
@@ -65,11 +65,11 @@ function swap_op(indiv::Individual)
 end
 
 function mutate_H_only(gate)
-    if isa(gate, NoisyMeasure)
+    if isa(gate, NoisyGHZMeasure)
         current_measure = gate.m
         new_basis = current_measure.basis_idx == 1 ? 3 : 1
         new_measure = GHZMeasure(current_measure.n, new_basis, current_measure.ghz_idx)
-        return NoisyMeasure(new_measure, gate.p)
+        return NoisyGHZMeasure(new_measure, gate.p)
     elseif isa(gate, Hgroup)
         N = typeof(gate).parameters[1]
         idx1, idx2 = gate.ghz_idx1, gate.ghz_idx2
@@ -110,10 +110,10 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     select_ops = combined_ops[randperm(length(combined_ops))[1:min(length(combined_ops), max_ops)]]
     
     #delete extra measures, the number limit for middle step measure is n-r
-    measure_count = count(op -> isa(op,NoisyMeasure), select_ops)
+    measure_count = count(op -> isa(op,NoisyGHZMeasure), select_ops)
     while measure_count > (n-r)
         for i in eachindex(select_ops)
-            if isa(select_ops[i],NoisyMeasure)
+            if isa(select_ops[i],NoisyGHZMeasure)
                 deleteat!(select_ops, i)
                 measure_count -= 1
                 break
@@ -125,7 +125,7 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     for i in k+1:r
         basis=rand([1,3]) #1 for X, 3 for Z
         measure=GHZMeasure(q,basis,i)
-        gate=NoisyMeasure(measure,indiv.η)
+        gate=NoisyGHZMeasure(measure,indiv.η)
         push!(select_ops, gate)
     end
 
@@ -171,7 +171,7 @@ function ini_pop_H_only!(population::Population)
         end
         for i in k+1:r
             basis = rand([1,3])
-            gate = NoisyMeasure(GHZMeasure(q, basis, i), population.η)
+            gate = NoisyGHZMeasure(GHZMeasure(q, basis, i), population.η)
             push!(indiv.ops, gate)
         end
     end
@@ -261,7 +261,7 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
         status = continue_stat
  
         for g in indiv.ops
-            if isa(g,NoisyMeasure)
+            if isa(g,NoisyGHZMeasure)
                 state, status=applywstatus!(state, g, indiv.f_in)
                 #if fail, break the loop
                 if status == failure_stat
@@ -298,7 +298,7 @@ end
 
 
                 #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP_H=Population(5, 3, 1, 4, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+POP_H=Population(5, 3, 1, 3, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run_H_only!(POP_H)
 
@@ -336,3 +336,6 @@ open("circuit_data.txt", "w") do io
     end
 end
 ##
+
+testcase=Individual("survivor", 5, 3, 1, 3, 0.7, 0.99, 0.99, Union{NoisyGHZMeasure, Bgroup, Hgroup}[Hgroup{3}(2, 1, 3), Hgroup{3}(2, 2, 1), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99), Hgroup{3}(2, 2, 3), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99), Hgroup{3}(2, 1, 2), Hgroup{3}(2, 2, 3), NoisyGHZMeasure(GHZMeasure(3, 1, 2), 0.99), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99)], 0.1459, [0.9393420150788211])
+calculate_performance!(testcase, 10)

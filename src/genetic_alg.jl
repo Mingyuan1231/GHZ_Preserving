@@ -1,5 +1,5 @@
 ##
-using .GHZ_Preserving
+using GHZPreserving
 using QuantumClifford
 using QuantumClifford.Experimental.NoisyCircuits
 using Random
@@ -14,7 +14,7 @@ mutable struct Individual
     f_in::Float64   #input fidelity
     p2::Float64     #depolarizing noise level
     η::Float64      #measurement noise level
-    ops::Vector{Union{Hgroup,Fgroup,NoisyMeasure}}
+    ops::Vector{Union{Hgroup,Bgroup,NoisyGHZMeasure}}
     success::Float64
     f_out::Vector{Float64}
 end 
@@ -35,13 +35,13 @@ function gain_op(indiv::Individual)
     r=indiv.r
 
     #measure number
-    measure_count = count(op -> isa(op,NoisyMeasure), indiv.ops)
+    measure_count = count(op -> isa(op,NoisyGHZMeasure), indiv.ops)
 
     if rand() < 0.2 && measure_count < (n-k) #adding measurement
         #chance to measure
         #rand[1,3] as X or Z measure, no Y for now, measure random ghz state
         measure=GHZMeasure(n,rand([1,3]),rand(k+1:r))  #as keep k result state, so only measure (k+1:r) state. 
-        gate=NoisyMeasure(measure, indiv.η)
+        gate=NoisyGHZMeasure(measure, indiv.η)
     elseif rand() < 0.5
         #chance to add H gate to two random ghz state
         perm=randperm(r)[1:2]
@@ -49,7 +49,7 @@ function gain_op(indiv::Individual)
     else
         #chance to add F gate to two random ghz state at random node.
         perm=randperm(r)[1:2]
-        gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
+        gate = Bgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
     end
 
     if length(new_indiv.ops) == 0
@@ -74,7 +74,7 @@ end
 
 function mutate(gate)
     #if it is a measure, then mutate to different basis
-    if isa(gate, NoisyMeasure)
+    if isa(gate, NoisyGHZMeasure)
         current_measure=gate.m
         n=current_measure.n
         idx=current_measure.ghz_idx
@@ -83,10 +83,10 @@ function mutate(gate)
         new_measure=GHZMeasure(n,new_basis,idx)
         p=gate.p
 
-        return NoisyMeasure(new_measure,p)
+        return NoisyGHZMeasure(new_measure,p)
     end
 
-    #if it is Hgroup or Fgroup, then mutate to random different gate
+    #if it is Hgroup or Bgroup, then mutate to random different gate
     N = typeof(gate).parameters[1]
     idx1=gate.ghz_idx1
     idx2=gate.ghz_idx2
@@ -95,8 +95,8 @@ function mutate(gate)
     if prob < 0.3
         new_gate=Hgroup{N}(rand(1:6),idx1,idx2)
     elseif prob < 0.6
-        node_idx = typeof(gate) <: Fgroup ? gate.node_idx : rand(1:N-1)  #if Fgroup, keep the node_idx, else randomize, this can be modify to fully randomize
-        new_gate=Fgroup{N}(rand(1:8),idx1,idx2,node_idx)
+        node_idx = typeof(gate) <: Bgroup ? gate.node_idx : rand(1:N-1)  #if Bgroup, keep the node_idx, else randomize, this can be modify to fully randomize
+        new_gate=Bgroup{N}(rand(1:8),idx1,idx2,node_idx)
     else
         new_gate=gate
     end
@@ -134,10 +134,10 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     select_ops = combined_ops[randperm(length(combined_ops))[1:min(length(combined_ops), max_ops)]]
     
     #delete extra measures, the number limit for middle step measure is n-r
-    measure_count = count(op -> isa(op,NoisyMeasure), select_ops)
+    measure_count = count(op -> isa(op,NoisyGHZMeasure), select_ops)
     while measure_count > (n-r)
         for i in eachindex(select_ops)
-            if isa(select_ops[i],NoisyMeasure)
+            if isa(select_ops[i],NoisyGHZMeasure)
                 deleteat!(select_ops, i)
                 measure_count -= 1
                 break
@@ -149,7 +149,7 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     for i in k+1:r
         basis=rand([1,3]) #1 for X, 3 for Z
         measure=GHZMeasure(q,basis,i)
-        gate=NoisyMeasure(measure,indiv.η)
+        gate=NoisyGHZMeasure(measure,indiv.η)
         push!(select_ops, gate)
     end
 
@@ -198,9 +198,9 @@ function ini_pop!(population::Population)
                 perm=randperm(r)[1:2]
                 gate = Hgroup{q}(rand(1:6),perm[1],perm[2])
             else
-                #chance to add F gate to two random ghz state at random node.
+                #chance to add B gate to two random ghz state at random node.
                 perm=randperm(r)[1:2]
-                gate = Fgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
+                gate = Bgroup{q}(rand(1:8),perm[1],perm[2],rand(1:q-1))
             end
             push!(indiv.ops, gate)
         end
@@ -209,7 +209,7 @@ function ini_pop!(population::Population)
         for i in k+1:r
             basis=rand([1,3]) #1 for X, 3 for Z
             measure=GHZMeasure(q,basis,i)
-            gate=NoisyMeasure(measure,population.η)
+            gate=NoisyGHZMeasure(measure,population.η)
             push!(indiv.ops, gate)
         end
     end
@@ -311,7 +311,7 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
         status = continue_stat
  
         for g in indiv.ops
-            if isa(g,NoisyMeasure)
+            if isa(g,NoisyGHZMeasure)
                 state, status=applywstatus!(state, g, indiv.f_in)
                 #if fail, break the loop
                 if status == failure_stat
@@ -359,7 +359,7 @@ function calculate_performance!(indiv::Individual; num_trials=1000, num_runs=10)
             status = continue_stat
 
             for g in indiv.ops
-                if isa(g, NoisyMeasure)
+                if isa(g, NoisyGHZMeasure)
                     state, status = applywstatus!(state, g, indiv.f_in)
                     # if fail, break the loop
                     if status == failure_stat
@@ -398,8 +398,8 @@ function show(io::IO, hg::Hgroup{N}) where N
     print(io, "Hgroup{$N}($(hg.gate_idx), $(hg.ghz_idx1), $(hg.ghz_idx2))")
 end    
 
-function show(io::IO, fg::Fgroup{N}) where N
-    print(io, "Fgroup{$N}($(fg.gate_idx), $(fg.ghz_idx1), $(fg.ghz_idx2), $(fg.node_idx))")
+function show(io::IO, fg::Bgroup{N}) where N
+    print(io, "Bgroup{$N}($(fg.gate_idx), $(fg.ghz_idx1), $(fg.ghz_idx2), $(fg.node_idx))")
 end
 
 ##

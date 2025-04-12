@@ -279,9 +279,9 @@ function Bgroup{N}(g,q1,q2,node) where N
     state = State_Cache[N]
 
     if !haskey(BPerm_Cache, N)
-        FPerm_Cache[N]=generate_Bperm(N,bgroup_gate,state)
+        BPerm_Cache[N]=generate_Bperm(N,bgroup_gate,state)
     end
-    perm = FPerm_Cache[N]
+    perm = BPerm_Cache[N]
 
     1 <= g <= 8 || throw(ArgumentError("Invalid gate index"))
     #1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
@@ -410,7 +410,7 @@ struct GHZMeasure <: QuantumClifford.AbstractMeasurement
     function GHZMeasure(n,b,si)
         #b as basis index, si as state index, n as number of qubits
         1 <= b <= 3 || throw(ArgumentError("Invalid basis index"))
-        1 <= si <= n || throw(ArgumentError("Invalid state index"))
+        #1 <= si <= n || throw(ArgumentError("Invalid state index"))
         return new(n,b,si)
     end
 end
@@ -420,7 +420,7 @@ end
 define "measure!" operation for GHZ state
 it will return the post measurement state and a probabilistic result
 """
-function measure!(s::GHZState, op::GHZMeasure) # TODO FIXUP weird place for a capital letter
+function measure!(s::GHZState, op::GHZMeasure) 
     n=s.qubit_num
     start_idx=(op.ghz_idx-1)*n+1
     end_idx=op.ghz_idx*n
