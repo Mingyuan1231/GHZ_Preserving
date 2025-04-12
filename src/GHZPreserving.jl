@@ -1,14 +1,14 @@
-module GHZ_Preserving
+module GHZPreserving
 
 using QuantumClifford
 using LinearAlgebra
 using Random
 using Distributions
 
-export GHZState, GHZMeasure, GHZGate, Measure!, rand, tensor!,
-    Hgroup, Fgroup, PauliGroup,
-    CNOT, CZ, F1, depolarize!, 
-    PauliNoiseOp, NoisyMeasure, NoisyMeasureNoisyReset
+export GHZState, GHZMeasure, GHZGate, measure!, rand, tensor!, apply!, toQCcircuit,
+    Hgroup, Bgroup, PauliGroup,
+    CNOT, CZ, Phase, depolarize!, 
+    PauliNoiseOp, NoisyGHZMeasure, NoisyGHZMeasureNoisyReset
 
 """
 convert bit(phase) to int
@@ -102,12 +102,12 @@ function generate_Hperm(n,gate,states) #arg n is the number of qubits, gate is t
 end
 
 """
-Generate all gates for F group
-There are eight gates in F group which are [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
+Generate all gates for B group
+There are eight gates in B group which are [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
 The idx of these gate already be found in the twoqubitgates, which are [20,88,121,189,241,309,620,688]
 This function return all these gates in the vector form in the order of [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
 """
-function generate_Fgroup() #generate F group
+function generate_Bgroup() #generate B group
     bi_inx=[20,88,121,189,241,309,620,688] # in the order of [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
     bi_gate=[]
     for i in 1:8
@@ -117,18 +117,18 @@ function generate_Fgroup() #generate F group
 end
 
 """
-generate permutation tuple each gate in F group and every nodes combinations
+generate permutation tuple each gate in B group and every nodes combinations
 This will turn a 3D array, need 3 idx to specifies
 1st idx is from 1 to n-1, indicates which nodes it acting on(Alice, Bob...)
 2nd idx is from 1 to 8, indicates which gate in F group
 3rd idx is from 1 to 2^n, indicates the input state
 the element in these three idx is the output state.
 """
-function generate_Fperm(n,bigate,states) # generate F group permutation for n qubit state
+function generate_Bperm(n,bigate,states) # generate B group permutation for n qubit state
     idx_phase_gate = [] #store all permutaion
     total_state=2^n
 
-    for t in 1:n-1      #for n qubit, there is n-1 F group application
+    for t in 1:n-1      #for n qubit, there is n-1 B group application
         current_perm = [Int[] for _ in 1:8]
 
         for k in 1:8    #bigate loop
@@ -192,14 +192,14 @@ Initialization
 const twoqubitgates = collect(enumerate_cliffords(2))
 # 6 gate in H group
 const hgroup_gate = generate_Hgroup()
-# 8 gate in F group
-const fgroup_gate = generate_Fgroup()
+# 8 gate in B group
+const bgroup_gate = generate_Bgroup()
 #Dict for state cache
 const State_Cache = Dict{Int, Vector}()
 #Dict for H group permutation cache
 const HPerm_Cache = Dict{Int, Vector}()
-#Dict for F group permutation cache
-const FPerm_Cache = Dict{Int, Vector}()
+#Dict for B group permutation cache
+const BPerm_Cache = Dict{Int, Vector}()
 #Dict for Pauli group permutation cache
 const PPerm_Cache = Dict{Int, Vector}()
 
@@ -257,14 +257,14 @@ function Hgroup{N}(g,q1,q2) where N
 end
 
 """
-F group
+B group
 GHZ preserving gate contain 8 gates which can apply bi-locally to all qubits
 1st argument, gate index: 1-8 in the order of [Phase1,CZ+Phase1, Identity, CZ, Phase2, CZ+Phase2, BothPhase, CZ+BothPhase]
 2nd argument, ghz index: 1 - n
 3rd argument, ghz index: 1 - n
 4th argument, node index:1 - (n-1)
 """
-struct Fgroup{N} <: GHZOp
+struct Bgroup{N} <: GHZOp
     gate_idx::Int
     ghz_idx1::Int
     ghz_idx2::Int
@@ -272,14 +272,14 @@ struct Fgroup{N} <: GHZOp
     perm::Any
 end
 
-function Fgroup{N}(g,q1,q2,node) where N
+function Bgroup{N}(g,q1,q2,node) where N
     if !haskey(State_Cache, N)
         State_Cache[N] = generate_state(N)
     end
     state = State_Cache[N]
 
-    if !haskey(FPerm_Cache, N)
-        FPerm_Cache[N]=generate_Fperm(N,fgroup_gate,state)
+    if !haskey(BPerm_Cache, N)
+        FPerm_Cache[N]=generate_Bperm(N,bgroup_gate,state)
     end
     perm = FPerm_Cache[N]
 
@@ -287,7 +287,7 @@ function Fgroup{N}(g,q1,q2,node) where N
     #1 <= q1 <= N || throw(ArgumentError("Invalid qubit index"))
     #1 <= q2 <= N || throw(ArgumentError("Invalid qubit index"))
     1 <= node <= (N-1) || throw(ArgumentError("Invalid node index"))
-    return Fgroup{N}(g,q1,q2,node,perm)
+    return Bgroup{N}(g,q1,q2,node,perm)
 end
 
 """
@@ -320,9 +320,6 @@ function PauliGroup{N}(p,s,q) where N
     return PauliGroup{N}(p,s,q,perm)
 end
 
-"""
-define "apply!" operation for H group
-"""
 function QuantumClifford.apply!(s::GHZState, op::Hgroup)
     n=s.qubit_num
     #concatenate the bit arrays from ghz_idx1 and ghz_idx2
@@ -343,10 +340,7 @@ function QuantumClifford.apply!(s::GHZState, op::Hgroup)
     return s
 end
 
-"""
-define "apply!" operation for F group
-"""
-function QuantumClifford.apply!(s::GHZState, op::Fgroup)
+function QuantumClifford.apply!(s::GHZState, op::Bgroup)
     n=s.qubit_num
     #concatenate the bit arrays from ghz_idx1 and ghz_idx2
     start_idx1=(op.ghz_idx1-1)*n+1
@@ -366,9 +360,6 @@ function QuantumClifford.apply!(s::GHZState, op::Fgroup)
     return s
 end
 
-"""
-define "apply!" operation for Pauli group
-"""
 function QuantumClifford.apply!(s::GHZState, op::PauliGroup)
     n=s.qubit_num
     start_idx=(op.ghz_idx-1)*n+1
@@ -384,18 +375,12 @@ function QuantumClifford.apply!(s::GHZState, op::PauliGroup)
     return s
 end
 
-"""
-define "*" operation for GHZOp
-"""
 function Base.:(*)(op::GHZOp, s::GHZState; phases::Bool=true)
     s = copy(s)
     apply!(s,op)
 end
 
-"""
-define tensor! operation for GHZ state
-"""
-function tensor!(s1::GHZState, s2::GHZState)
+function tensor!(s1::GHZState, s2::GHZState) # TODO FIXUP there is already a tensor function in QuantumClifford and others
     q1 = s1.qubit_num
     q2 = s2.qubit_num
     
@@ -422,20 +407,20 @@ struct GHZMeasure <: QuantumClifford.AbstractMeasurement
     n::Int
     basis_idx::Int
     ghz_idx::Int
+    function GHZMeasure(n,b,si)
+        #b as basis index, si as state index, n as number of qubits
+        1 <= b <= 3 || throw(ArgumentError("Invalid basis index"))
+        1 <= si <= n || throw(ArgumentError("Invalid state index"))
+        return new(n,b,si)
+    end
 end
 
-function GHZMeasure(n,b,si)
-    #b as basis index, si as state index, n as number of qubits
-    1 <= b <= 3 || throw(ArgumentError("Invalid basis index"))
-    1 <= si <= n || throw(ArgumentError("Invalid state index"))
-    return GHZMeasure(n,b,si)
-end
 
 """
-define "Measure!" operation for GHZ state
+define "measure!" operation for GHZ state
 it will return the post measurement state and a probabilistic result
 """
-function Measure!(s::GHZState, op::GHZMeasure)
+function measure!(s::GHZState, op::GHZMeasure) # TODO FIXUP weird place for a capital letter
     n=s.qubit_num
     start_idx=(op.ghz_idx-1)*n+1
     end_idx=op.ghz_idx*n
@@ -467,19 +452,19 @@ The general gate consists of:
 struct GHZGate <: GHZOp
     N::Int                      #number of qubits
     H::Int                      #H group index
-    F::Array{Int,1}             #F group index
+    B::Array{Int,1}             #B group index
     Paulis::Array{Int,1}        #Pauli group index
     ghz_idx1::Int               #ghz state index1
     ghz_idx2::Int               #ghz state index2
-    function GHZGate(n,h,f,p,i1,i2)
+    function GHZGate(n,h,b,p,i1,i2)
         (1 <= h <= 6) || throw(ArgumentError("Invalid H group index, it should be between 1 and 6"))
-        (length(f) == n-1) || throw(ArgumentError("F group series length error, it should be n-1"))
-        all(1 <= fi <= 8 for fi in f) || throw(ArgumentError("Invalid F group index, it should be between 1 and 8"))
+        (length(b) == n-1) || throw(ArgumentError("B group series length error, it should be n-1"))
+        all(1 <= bi <= 8 for bi in b) || throw(ArgumentError("Invalid B group index, it should be between 1 and 8"))
         (length(p) == n) || throw(ArgumentError("Pauli group series length error, it should be n"))
         all(1 <= pi <= 4 for pi in p) || throw(ArgumentError("Invalid Pauli group index, it should be between 1 and 4"))
         (i1 > 0 && i2 > 0) || throw(ArgumentError("GHZ state index should be positive integers"))
         i1 != i2 || throw(ArgumentError("GHZ state index should be different"))
-        new(n,h,f,p,i1,i2)
+        new(n,h,b,p,i1,i2)
     end
 end
 
@@ -489,19 +474,15 @@ function QuantumClifford.apply!(s::GHZState, g::GHZGate)
     
     #apply H group
     apply!(s,Hgroup{n}(g.H,g.ghz_idx1,g.ghz_idx2))
-    #apply F group
+    #apply B group
     for i in 1:n-1
-        apply!(s,Fgroup{n}(g.F[i],g.ghz_idx1,g.ghz_idx2,i))
+        apply!(s,Bgroup{n}(g.B[i],g.ghz_idx1,g.ghz_idx2,i))
     end
     #apply Pauli group
     for i in 1:n
         apply!(s,PauliGroup{n}(g.Paulis[i],g.ghz_idx1,i))
     end
     return s
-end
-
-function QuantumClifford._apply!(s::GHZState, g::GHZGate)
-    return QuantumClifford.apply!(s, g)
 end
 
 #region good operations
@@ -552,19 +533,19 @@ function QuantumClifford.apply!(s::GHZState, op::CZ)
     n=s.qubit_num
     m=s.ghz_num
     #apply H group
-    apply!(s,Fgroup(4,op.ghz_idx1,op.ghz_idx2,op.node))
+    apply!(s,Bgroup(4,op.ghz_idx1,op.ghz_idx2,op.node))
     return s
 end
 
 """
 Phase gate as a good operation
 """
-struct F1 <: GHZOp
+struct Phase <: GHZOp
     n::Int
     ghz_idx1::Int
     ghz_idx2::Int
     node::Int
-    function F1(n,i1,i2,node)
+    function Phase(n,i1,i2,node)
         (i1 > 0 && i2 > 0) || throw(ArgumentError("GHZ state index should be positive integers"))
         (1<=i1<=n && 1<=i2<=n) || throw(ArgumentError("Invalid GHZ state index"))
         (1<=node<=n-1) || throw(ArgumentError("Invalid node index"))
@@ -572,11 +553,11 @@ struct F1 <: GHZOp
     end
 end
 
-function QuantumClifford.apply!(s::GHZState, op::F1)
+function QuantumClifford.apply!(s::GHZState, op::Phase)
     n=s.qubit_num
     m=s.ghz_num
     #apply H group
-    apply!(s,Fgroup(1,op.ghz_idx1,op.ghz_idx2,op.node))
+    apply!(s,Bgroup(1,op.ghz_idx1,op.ghz_idx2,op.node))
     return s
 end
 
@@ -635,7 +616,7 @@ function depolarize!(s::GHZState, op::Hgroup, p::Float64,)
    
 end
 
-function depolarize!(s::GHZState, op::Fgroup, p::Float64)
+function depolarize!(s::GHZState, op::Bgroup, p::Float64)
     n=s.qubit_num
     i1=op.ghz_idx1
     i2=op.ghz_idx2
@@ -653,7 +634,7 @@ end
 """
 Noisy measurement
 """
-struct NoisyMeasure <: GHZOp
+struct NoisyGHZMeasure <: GHZOp
     m::GHZMeasure
     p::Float64
 end
@@ -661,8 +642,8 @@ end
 """
 Common noisy measurement with probability p giving wrong result
 """
-function QuantumClifford.apply!(s::GHZState, op::NoisyMeasure)
-    state, result=Measure!(s, op.m)
+function QuantumClifford.apply!(s::GHZState, op::NoisyGHZMeasure)
+    state, result=measure!(s, op.m)
     n=s.qubit_num
 
     if op.m.basis_idx==3  #Z measurement
@@ -686,14 +667,14 @@ end
 """
 Noisy measurement and Pauli noise after the reset
 """
-struct NoisyMeasureNoisyReset
+struct NoisyGHZMeasureNoisyReset
     m::GHZMeasure
     p::Float64
     f_in::Float64
 end
 
 #=
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure)
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasure)
     state, result=Measure!(s, op.m)
     original_result = copy(result)
 
@@ -708,8 +689,8 @@ function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure)
 end
 =#
 
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure, f_in::Float64=1.0)
-    state, result=Measure!(s, op.m)
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasure, f_in::Float64=1.0)
+    state, result=measure!(s, op.m)
     n=s.qubit_num
 
     if op.m.basis_idx==3  #Z measurement
@@ -750,8 +731,8 @@ function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasure, f_in::Floa
     end
 end
 
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyMeasureNoisyReset)
-    state, result = Measure!(s, op.m)
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasureNoisyReset)
+    state, result = measure!(s, op.m)
     
     #flip error
     flipped =  result .⊻ (rand(length(result)) .< op.p)
@@ -805,14 +786,14 @@ Random GHZGate
 """
 function Random.rand(::Type{GHZGate}, n::Int)
     h=rand(1:6)
-    f=rand(1:8,n-1)
+    b=rand(1:8,n-1)
     p=rand(1:4,n)
     ghz1=rand(1:n)
     ghz2=rand(1:n)
     while ghz1==ghz2
         ghz2=rand(1:n)
     end
-    return GHZGate(n,h,f,p,ghz1,ghz2)
+    return GHZGate(n,h,b,p,ghz1,ghz2)
 end
 
 """
@@ -841,16 +822,16 @@ function Random.rand(::Type{CZ}, n::Int)
 end
 
 """
-Random F1 on ghz state i and j
+Random Phase gate on ghz state i and j
 """
-function Random.rand(::Type{F1}, n::Int)
+function Random.rand(::Type{Phase}, n::Int)
     i=rand(1:n)
     j=rand(1:n)
     while i==j
         j=rand(1:n)
     end
     node=rand(1:n-1)
-    return F1(n,i,j,node)
+    return Phase(n,i,j,node)
 end
 
 """
@@ -879,8 +860,8 @@ function toQCcircuit(g::Hgroup)
     return hgroup_gate[g.gate_idx]
 end
 
-function toQCcircuit(g::Fgroup)
-    return fgroup_gate[g.gate_idx]
+function toQCcircuit(g::Bgroup)
+    return bgroup_gate[g.gate_idx]
 
 end
 

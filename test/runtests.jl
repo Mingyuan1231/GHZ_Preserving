@@ -1,5 +1,6 @@
 using Test
 using GHZPreserving
+using QuantumClifford: apply!
 
 include("test_state.jl")
 include("test_gate.jl")
