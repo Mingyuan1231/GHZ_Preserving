@@ -856,20 +856,50 @@ Convert GHZ preserving gate to QC gate
 """
 function toQCcircuit end
 
-function toQCcircuit(g::Hgroup)
-    return hgroup_gate[g.gate_idx]
+function toQCcircuit(g::Hgroup{N}) where N
+    gate = hgroup_gate[g.gate_idx]
+    ops = Vector{QuantumClifford.SparseGate}(undef, N) #作用于两个state，返回n个 SparseGate
+    for i in 1:N
+        qubit1 = (g.ghz_idx1 - 1) * N + i
+        qubit2 = (g.ghz_idx2 - 1) * N + i
+        ops[i] = QuantumClifford.SparseGate(gate, (qubit1, qubit2))
+    end
+    return ops
 end
 
-function toQCcircuit(g::Bgroup)
-    return bgroup_gate[g.gate_idx]
-
+function toQCcircuit(g::Bgroup{N}) where N
+    gate = bgroup_gate[g.gate_idx]
+    # 作用于两个 state，返回两个 SparseGate：一个作用在第node_idx个 qubit，另一个作用在第node_idx+1个 qubit
+    q1_first = (g.ghz_idx1 - 1) * N + g.node_idx       # state1 的第 node_idx 个 qubit
+    q2_first = (g.ghz_idx2 - 1) * N + g.node_idx       # state2 的第 node_idx 个 qubit
+    
+    q1_second = (g.ghz_idx1 - 1) * N + (g.node_idx + 1)  # state1 的第 node_idx+1 个 qubit
+    q2_second = (g.ghz_idx2 - 1) * N + (g.node_idx + 1)  # state2 的第 node_idx+1 个 qubit
+    
+    return [
+        QuantumClifford.SparseGate(gate, (q1_first, q2_first)),
+        QuantumClifford.SparseGate(gate, (q1_second, q2_second))
+    ]
 end
 
 const pg_qc = (sId1,sX,sZ,sY)
 
-function toQCcircuit(g::PauliGroup)
-    return pg_qc[g.gate_idx]
+function toQCcircuit(g::PauliGroup{N}) where N
+    qubit = (g.ghz_idx - 1) * N + g.qubit_idx
+
+    op = if g.gate_idx == 1
+        sX(qubit)
+    elseif g.gate_idx == 2
+        sY(qubit)
+    elseif g.gate_idx == 3
+        sZ(qubit)
+    else 
+        sId1(qubit)
+    end
+
+    return op
 end
+
 
 function toQCcircuit(g::GHZMeasure)
     m=(sMX, sMY, sMZ)[g.basis_idx]

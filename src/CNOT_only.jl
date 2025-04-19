@@ -298,7 +298,7 @@ end
 
 
                 #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP_H=Population(5, 3, 1, 3, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+POP_H=Population(4, 3, 1, 3, 0.7, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run_H_only!(POP_H)
 
@@ -336,6 +336,3 @@ open("circuit_data.txt", "w") do io
     end
 end
 ##
-
-testcase=Individual("survivor", 5, 3, 1, 3, 0.7, 0.99, 0.99, Union{NoisyGHZMeasure, Bgroup, Hgroup}[Hgroup{3}(2, 1, 3), Hgroup{3}(2, 2, 1), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99), Hgroup{3}(2, 2, 3), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99), Hgroup{3}(2, 1, 2), Hgroup{3}(2, 2, 3), NoisyGHZMeasure(GHZMeasure(3, 1, 2), 0.99), NoisyGHZMeasure(GHZMeasure(3, 3, 3), 0.99)], 0.1459, [0.9393420150788211])
-calculate_performance!(testcase, 10)
