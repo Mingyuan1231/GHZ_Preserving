@@ -8,7 +8,7 @@ using Distributions
 export GHZState, GHZMeasure, GHZGate, measure!, rand, tensor!, apply!, toQCcircuit,
     Hgroup, Bgroup, PauliGroup,
     CNOT, CZ, Phase, depolarize!, 
-    PauliNoiseOp, NoisyGHZMeasure, NoisyGHZMeasureNoisyReset
+    PauliNoiseOp, NoisyGHZMeasureNoisyReset
 
 """
 convert bit(phase) to int
@@ -224,6 +224,30 @@ GHZState(t::Tuple)=GHZState(BitVector(t))
 
 Base.copy(state::GHZState) = GHZState(state.qubit_num, state.ghz_num, copy(state.phases))
 Base.:(==)(l::GHZState, r::GHZState) = l.phases == r.phases
+
+
+"""
+    ghzstateindex(state::Union{GHZState, Stabilizer, MixedDestabilizer}, n::Int)
+
+Extracts the canonical phase of the GHZ state (either GHZPreserving or QuantumClifford format),
+adjusts qubit ordering, converts to integer index ∈ [1, 2^n].
+This is useful for comparing logical GHZ-type phase outcomes across different representations.
+Note: This has to be in two state format, so the phase is 2n bits.
+"""
+function ghzstateindex(state::GHZState, n::Int)
+    phase = adjust_order(canonicalize!(Stabilizer(state)).tab.phases, n)
+    return (bit_to_int(phase) + 1) ÷ 2
+end
+
+function ghzstateindex(state::Stabilizer, n::Int)
+    phase = adjust_order(canonicalize!(state).tab.phases, n)
+    return (bit_to_int(phase) + 1) ÷ 2
+end
+
+function ghzstateindex(state::MixedDestabilizer, n::Int)
+    phase = adjust_order(canonicalize!(state).tab.phases, n)
+    return (bit_to_int(phase) + 1) ÷ 2
+end
 
 """
 H group
@@ -597,52 +621,54 @@ function QuantumClifford.apply!(s::GHZState, op::PauliNoiseOp)
     return s
 end
 
-"""
-Depolarize error
-"""
-function depolarize!(s::GHZState, op::Hgroup, p::Float64,)
+function QuantumClifford.apply!(s::GHZState, g::QuantumClifford.NoisyGate)
+    s = applynoise!(
+        apply!(s,g.gate),
+        g.noise,
+        affected_idx(g.gate)...),
+
+    return s
+end
+
+affected_idx(op::Hgroup{N}) where {N} = ((op.ghz_idx1, op.ghz_idx2), 1:N)
+affected_idx(op::Bgroup) = ((op.ghz_idx1, op.ghz_idx2), (op.node_idx))
+
+function QuantumClifford.applynoise!(s::GHZState, noise::PauliNoise, ghz_idx,qubit_idx)
     n=s.qubit_num
-    i1=op.ghz_idx1
-    i2=op.ghz_idx2
-    
-    for q in 1:n
-        if rand()>p
-            case1 = rand(1:4)
-            apply!(s,PauliGroup{n}(case1,i1,q))
-            case2 = rand(1:4)
-            apply!(s,PauliGroup{n}(case2,i2,q))
+
+    for i in ghz_idx
+        for q in qubit_idx
+            r=rand()
+            if r<noise.px
+                apply!(s,PauliGroup{n}(1,i,q))
+            elseif r<noise.px+noise.py
+                apply!(s,PauliGroup{n}(2,i,q))
+            elseif r<noise.px+noise.py+noise.pz
+                apply!(s,PauliGroup{n}(3,i,q))
+            end
         end
     end
-   
+    return s
 end
 
-function depolarize!(s::GHZState, op::Bgroup, p::Float64)
-    n=s.qubit_num
-    i1=op.ghz_idx1
-    i2=op.ghz_idx2
-    node=op.node_idx
-
-    if rand()>p
-        case1 = rand(1:4)
-        apply!(s,PauliGroup{n}(case1,i1,node))
-        case2 = rand(1:4)
-        apply!(s,PauliGroup{n}(case2,i2,node+1))
-    end
-
+function QuantumClifford.applynoise!(s::GHZState, noise::UnbiasedUncorrelatedNoise, ghz_idx, qubit_idx)
+    p = noise.p
+    px = py = pz = p / 3
+    return applynoise!(s, PauliNoise(px, py, pz), ghz_idx, qubit_idx)
 end
 
+
 """
-Noisy measurement
+Noisy measurement and Pauli noise after the reset
 """
-struct NoisyGHZMeasure <: GHZOp
+struct NoisyGHZMeasureNoisyReset
     m::GHZMeasure
     p::Float64
+    f_in::Float64
 end
+NoisyGHZMeasureNoisyReset(m,p) = NoisyGHZMeasureNoisyReset(m,p,1.0)
 
-"""
-Common noisy measurement with probability p giving wrong result
-"""
-function QuantumClifford.apply!(s::GHZState, op::NoisyGHZMeasure)
+function QuantumClifford.apply!(s::GHZState, op::NoisyGHZMeasureNoisyReset)
     state, result=measure!(s, op.m)
     n=s.qubit_num
 
@@ -662,34 +688,8 @@ function QuantumClifford.apply!(s::GHZState, op::NoisyGHZMeasure)
         return state, result
     end
 end
-
-
-"""
-Noisy measurement and Pauli noise after the reset
-"""
-struct NoisyGHZMeasureNoisyReset
-    m::GHZMeasure
-    p::Float64
-    f_in::Float64
-end
-
-#=
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasure)
-    state, result=Measure!(s, op.m)
-    original_result = copy(result)
-
-    #each qubit have independent filp error with probability p
-    result .= result .⊻ (rand(length(result)) .< op.p)
-    
-    if any(original_result .!= result)
-        return state, failure_stat
-    else
-        return state, continue_stat
-    end
-end
-=#
-
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasure, f_in::Float64=1.0)
+function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasureNoisyReset)
+    f_in = op.f_in
     state, result=measure!(s, op.m)
     n=s.qubit_num
 
@@ -729,20 +729,6 @@ function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasure, f_in::F
             return state, failure_stat
         end
     end
-end
-
-function QuantumClifford.applywstatus!(s::GHZState, op::NoisyGHZMeasureNoisyReset)
-    state, result = measure!(s, op.m)
-    
-    #flip error
-    flipped =  result .⊻ (rand(length(result)) .< op.p)
-
-    #if flipped apply Pauli noise
-    if any(flipped)
-        apply!(state, PauliNoiseOp(s.qubit_num,op.m.ghz_idx,op.px,op.py,op.pz))
-    end
-
-    state, any(flipped) ? failure_stat : continue_stat 
 end
 
 #endregion
@@ -900,10 +886,78 @@ function toQCcircuit(g::PauliGroup{N}) where N
     return op
 end
 
-
 function toQCcircuit(g::GHZMeasure)
-    m=(sMX, sMY, sMZ)[g.basis_idx]
+    measure=[]
+    for i in 1:g.n
+        m=(sMX, sMY, sMZ)[g.basis_idx]((g.ghz_idx-1)*g.n+i)
+        push!(measure, m)  
+    end
+    return measure
 end
+
+function toQCcircuit(g::NoisyGHZMeasureNoisyReset)
+    return toQCcircuit(g.m)
+end
+
+#=
+function toQCcircuit(g::NoisyGHZMeasureNoisyReset)
+    n = g.m.n
+    idx = g.m.ghz_idx
+    basis = g.m.basis_idx
+    η = g.p
+
+    start = (idx - 1) * n + 1  # global offset
+    projectors = PauliOperator[]
+
+    if basis == 3  # Z basis: generate n single-qubit Z projectors
+        for i in 0:(n - 1)
+            x = [false]
+            z = [true]
+            local_p = PauliOperator(x, z)  # Z
+            global_p = embed(n * idx, (start + i,), local_p)
+            push!(projectors, global_p)
+        end
+        return projectors
+
+    elseif basis == 1  # X basis: generate n single-qubit X projectors
+        for i in 0:(n - 1)
+            x = [true]
+            z = [false]
+            local_p = PauliOperator(x, z)  # X
+            global_p = embed(n * idx, (start + i,), local_p)
+            push!(projectors, global_p)
+        end
+        return projectors
+
+    else
+        @warn "Unsupported basis: $basis"
+        return []
+    end
+end
+=#
+
+"""
+Convert a sequence of GHZOp gates to a flat list of SparseGate for QC simulation.
+Only includes SparseGate-compatible operations (Hgroup, Bgroup, PauliGroup).
+Others like measurements are skipped or logged.
+"""
+function toQCcircuit(ops::Vector)
+    qc_gates = []
+    
+    for g in ops
+        converted = toQCcircuit(g)
+        if converted isa AbstractVector #H and B
+            append!(qc_gates, converted)
+        elseif converted isa QuantumClifford.SparseGate #Pauli
+            push!(qc_gates, converted)
+        else    #Measure is not supported
+            continue  # skip
+        end
+    end
+
+    return qc_gates
+end
+
 
 function QuantumClifford.Stabilizer(s::GHZState)
     # make sure the state is in the cache

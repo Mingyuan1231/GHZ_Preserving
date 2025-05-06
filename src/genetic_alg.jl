@@ -14,7 +14,7 @@ mutable struct Individual
     f_in::Float64   #input fidelity
     p2::Float64     #depolarizing noise level
     η::Float64      #measurement noise level
-    ops::Vector{Union{Hgroup,Bgroup,NoisyGHZMeasure}}
+    ops::Vector{Union{Hgroup,Bgroup,GHZMeasure}}
     success::Float64
     f_out::Vector{Float64}
 end 
@@ -35,13 +35,13 @@ function gain_op(indiv::Individual)
     r=indiv.r
 
     #measure number
-    measure_count = count(op -> isa(op,NoisyGHZMeasure), indiv.ops)
+    measure_count = count(op -> isa(op,GHZMeasure), indiv.ops)
 
     if rand() < 0.2 && measure_count < (n-k) #adding measurement
         #chance to measure
         #rand[1,3] as X or Z measure, no Y for now, measure random ghz state
-        measure=GHZMeasure(n,rand([1,3]),rand(k+1:r))  #as keep k result state, so only measure (k+1:r) state. 
-        gate=NoisyGHZMeasure(measure, indiv.η)
+        gate=GHZMeasure(n,rand([1,3]),rand(k+1:r))  #as keep k result state, so only measure (k+1:r) state. 
+        
     elseif rand() < 0.5
         #chance to add H gate to two random ghz state
         perm=randperm(r)[1:2]
@@ -72,20 +72,16 @@ function swap_op(indiv::Individual)
     return new_indiv
 end
 
-function mutate(gate)
-    #if it is a measure, then mutate to different basis
-    if isa(gate, NoisyGHZMeasure)
-        current_measure=gate.m
-        n=current_measure.n
-        idx=current_measure.ghz_idx
-        new_basis=current_measure.basis_idx == 1 ? 3 : 1
+function mutate(m::GHZMeasure)
+    n=m.n
+    idx=m.ghz_idx
+    new_basis=m.basis_idx == 1 ? 3 : 1
 
-        new_measure=GHZMeasure(n,new_basis,idx)
-        p=gate.p
+    new_measure=GHZMeasure(n,new_basis,idx)
+    return new_measure
+end
 
-        return NoisyGHZMeasure(new_measure,p)
-    end
-
+function mutate(gate::Union{Hgroup, Bgroup})
     #if it is Hgroup or Bgroup, then mutate to random different gate
     N = typeof(gate).parameters[1]
     idx1=gate.ghz_idx1
@@ -134,10 +130,10 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     select_ops = combined_ops[randperm(length(combined_ops))[1:min(length(combined_ops), max_ops)]]
     
     #delete extra measures, the number limit for middle step measure is n-r
-    measure_count = count(op -> isa(op,NoisyGHZMeasure), select_ops)
+    measure_count = count(op -> isa(op,GHZMeasure), select_ops)
     while measure_count > (n-r)
         for i in eachindex(select_ops)
-            if isa(select_ops[i],NoisyGHZMeasure)
+            if isa(select_ops[i],GHZMeasure)
                 deleteat!(select_ops, i)
                 measure_count -= 1
                 break
@@ -149,8 +145,7 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     for i in k+1:r
         basis=rand([1,3]) #1 for X, 3 for Z
         measure=GHZMeasure(q,basis,i)
-        gate=NoisyGHZMeasure(measure,indiv.η)
-        push!(select_ops, gate)
+        push!(select_ops, measure)
     end
 
     new_indiv.ops = select_ops
@@ -209,8 +204,7 @@ function ini_pop!(population::Population)
         for i in k+1:r
             basis=rand([1,3]) #1 for X, 3 for Z
             measure=GHZMeasure(q,basis,i)
-            gate=NoisyGHZMeasure(measure,population.η)
-            push!(indiv.ops, gate)
+            push!(indiv.ops, measure)
         end
     end
 end
@@ -296,6 +290,13 @@ end
 
 #TODO hashing?
 
+noisify(circuit, p2, η, f_in) = [noisify(op, p2, η, f_in) for op in circuit]
+
+noisify(op::Hgroup, p2, η, f_in) = QuantumClifford.NoisyGate(op, QuantumClifford.PauliNoise((1-p2)/3,(1-p2)/3,(1-p2)/3))
+noisify(op::Bgroup, p2, η, f_in) = QuantumClifford.NoisyGate(op, QuantumClifford.PauliNoise((1-p2)/3,(1-p2)/3,(1-p2)/3))
+noisify(op::GHZMeasure, p2, η, f_in) = NoisyGHZMeasureNoisyReset(op,η,f_in)
+
+
 function calculate_performance!(indiv::Individual, current_gen::Int) 
     n=indiv.n
     q=indiv.q
@@ -306,21 +307,17 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
     count = 0 #counting success trials
     fout = zeros(Int, k) #fidelity
 
+    circuit = indiv.ops
+    noisy_circuit = noisify(circuit, indiv.p2, indiv.η, indiv.f_in)
+
     for i in 1:t
         state = rand(GHZState,q,r,indiv.f_in) # only need to consider r raw states, as constraint by register number.
         status = continue_stat
  
-        for g in indiv.ops
-            if isa(g,NoisyGHZMeasure)
-                state, status=applywstatus!(state, g, indiv.f_in)
-                #if fail, break the loop
-                if status == failure_stat
-                    break
-                end
-                
-            else
-                apply!(state,g)
-                depolarize!(state, g, indiv.p2)
+        for g in noisy_circuit
+            state, status=applywstatus!(state, g)
+            if status == failure_stat
+                break
             end
         end
 
@@ -331,7 +328,6 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
                 end_idx=j*q
                 fout[j]+=Int(state.phases[start_idx:end_idx] == zeros(Int,q))
             end
-            #fout+=Int(state.phases[1:q] == zeros(Int,q))
         end
     end
 
@@ -359,7 +355,7 @@ function calculate_performance!(indiv::Individual; num_trials=1000, num_runs=10)
             status = continue_stat
 
             for g in indiv.ops
-                if isa(g, NoisyGHZMeasure)
+                if isa(g, NoisyGHZMeasureNoisyReset)
                     state, status = applywstatus!(state, g, indiv.f_in)
                     # if fail, break the loop
                     if status == failure_stat
@@ -406,7 +402,7 @@ end
 
 
               #n, q, k, r, fin,   p2,   η, size,mgen,mops,start_ops,pairs,children_per_pair,mutants_per_individual_per_type,p_single_operation_mutates,p_lose_operation,p_add_operation,p_swap_operations,p_mutate_operations,individuals,selection_history
-POP=Population(5, 3, 1, 4, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
+POP=Population(5, 3, 1, 3, 0.9, 0.99, 0.99, 30, 20, 20, 5, 50, 2, 5, 0.2, 0.2, 0.2, 0.2, [], Dict())
 
 run!(POP)
 
@@ -417,8 +413,9 @@ for op in idv.ops
     println(op)
 end
 
+calculate_performance!(idv,10000)
 ff=[]
-for i in 1:10
+for i in 1:100000
     push!(ff,calculate_performance!(idv,10))
 end
 mean(ff)

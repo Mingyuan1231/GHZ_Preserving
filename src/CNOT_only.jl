@@ -14,7 +14,7 @@ mutable struct Individual
     f_in::Float64   #input fidelity
     p2::Float64     #depolarizing noise level
     η::Float64      #measurement noise level
-    ops::Vector{Union{Hgroup,Bgroup,NoisyGHZMeasure}}
+    ops::Vector{Union{Hgroup,Bgroup,NoisyGHZMeasureNoisyReset}}
     success::Float64
     f_out::Vector{Float64}
 end 
@@ -33,11 +33,11 @@ function gain_op_H_only(indiv::Individual)
     k=indiv.k
     r=indiv.r
 
-    measure_count = count(op -> isa(op, NoisyGHZMeasure), indiv.ops)
+    measure_count = count(op -> isa(op, NoisyGHZMeasureNoisyReset), indiv.ops)
 
     if rand() < 0.3 && measure_count < (n - k)
         measure = GHZMeasure(n, rand([1, 3]), rand(k+1:r))
-        gate = NoisyGHZMeasure(measure, indiv.η)
+        gate = NoisyGHZMeasureNoisyReset(measure, indiv.η)
     else
         perm = randperm(r)[1:2]
         gate = Hgroup{q}(2, perm[1], perm[2])
@@ -65,11 +65,11 @@ function swap_op(indiv::Individual)
 end
 
 function mutate_H_only(gate)
-    if isa(gate, NoisyGHZMeasure)
+    if isa(gate, NoisyGHZMeasureNoisyReset)
         current_measure = gate.m
         new_basis = current_measure.basis_idx == 1 ? 3 : 1
         new_measure = GHZMeasure(current_measure.n, new_basis, current_measure.ghz_idx)
-        return NoisyGHZMeasure(new_measure, gate.p)
+        return NoisyGHZMeasureNoisyReset(new_measure, gate.p)
     elseif isa(gate, Hgroup)
         N = typeof(gate).parameters[1]
         idx1, idx2 = gate.ghz_idx1, gate.ghz_idx2
@@ -110,10 +110,10 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     select_ops = combined_ops[randperm(length(combined_ops))[1:min(length(combined_ops), max_ops)]]
     
     #delete extra measures, the number limit for middle step measure is n-r
-    measure_count = count(op -> isa(op,NoisyGHZMeasure), select_ops)
+    measure_count = count(op -> isa(op,NoisyGHZMeasureNoisyReset), select_ops)
     while measure_count > (n-r)
         for i in eachindex(select_ops)
-            if isa(select_ops[i],NoisyGHZMeasure)
+            if isa(select_ops[i],NoisyGHZMeasureNoisyReset)
                 deleteat!(select_ops, i)
                 measure_count -= 1
                 break
@@ -125,7 +125,7 @@ function new_child(indiv::Individual, indiv2::Individual, max_ops::Int)
     for i in k+1:r
         basis=rand([1,3]) #1 for X, 3 for Z
         measure=GHZMeasure(q,basis,i)
-        gate=NoisyGHZMeasure(measure,indiv.η)
+        gate=NoisyGHZMeasureNoisyReset(measure,indiv.η)
         push!(select_ops, gate)
     end
 
@@ -171,7 +171,7 @@ function ini_pop_H_only!(population::Population)
         end
         for i in k+1:r
             basis = rand([1,3])
-            gate = NoisyGHZMeasure(GHZMeasure(q, basis, i), population.η)
+            gate = NoisyGHZMeasureNoisyReset(GHZMeasure(q, basis, i), population.η)
             push!(indiv.ops, gate)
         end
     end
@@ -261,7 +261,7 @@ function calculate_performance!(indiv::Individual, current_gen::Int)
         status = continue_stat
  
         for g in indiv.ops
-            if isa(g,NoisyGHZMeasure)
+            if isa(g,NoisyGHZMeasureNoisyReset)
                 state, status=applywstatus!(state, g, indiv.f_in)
                 #if fail, break the loop
                 if status == failure_stat
