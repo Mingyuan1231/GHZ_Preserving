@@ -120,7 +120,7 @@ end
 generate permutation tuple each gate in B group and every nodes combinations
 This will turn a 3D array, need 3 idx to specifies
 1st idx is from 1 to n-1, indicates which nodes it acting on(Alice, Bob...)
-2nd idx is from 1 to 8, indicates which gate in F group
+2nd idx is from 1 to 8, indicates which gate in B group
 3rd idx is from 1 to 2^n, indicates the input state
 the element in these three idx is the output state.
 """
@@ -404,7 +404,7 @@ function Base.:(*)(op::GHZOp, s::GHZState; phases::Bool=true)
     apply!(s,op)
 end
 
-function tensor!(s1::GHZState, s2::GHZState) # TODO FIXUP there is already a tensor function in QuantumClifford and others
+function tensor!(s1::GHZState, s2::GHZState) 
     q1 = s1.qubit_num
     q2 = s2.qubit_num
     
