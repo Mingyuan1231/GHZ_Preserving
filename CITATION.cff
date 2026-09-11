@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: >-
+  Please cite the paper for the research methods and results, and the archived
+  software release when using this code. Record the Git commit used in calculations.
+type: software
+title: "GHZPreserving.jl: GHZ-Preserving Circuit Optimization Library"
+authors:
+  - family-names: Wang
+    given-names: Mingyuan
+repository-code: "https://github.com/Mingyuan1231/GHZ_Preserving"
+url: "https://github.com/Mingyuan1231/GHZ_Preserving"
+doi: "10.5281/zenodo.17470505"
+abstract: >-
+  Julia research software for simulating GHZ-preserving Clifford operations
+  using binary GHZ-basis labels and cached permutations, with genetic
+  circuit-search scripts for GHZ entanglement distillation.
+keywords:
+  - GHZ states
+  - entanglement distillation
+  - entanglement purification
+  - Clifford gates
+  - quantum networks
+  - circuit optimization
+  - Julia
+preferred-citation:
+  type: article
+  title: "GHZ-Preserving Gates and Optimized Distillation Circuits"
+  authors:
+    - family-names: Wang
+      given-names: Mingyuan
+    - family-names: Avis
+      given-names: Guus
+    - family-names: Krastanov
+      given-names: Stefan
+  year: 2025
+  journal: arXiv
+  doi: "10.48550/arXiv.2510.25854"
+  url: "https://arxiv.org/abs/2510.25854"
